@@ -1,0 +1,85 @@
+#include "../src/vud.h"
+#include "../src/vud_mem.h"
+#include "../src/vud_ime.h"
+
+#include <stdio.h>
+
+int main(void) {
+    vud_rank r = vud_rank_alloc(0);
+
+    if (r.err) {
+        puts("Cannot allocate rank.");
+        return 1;
+    }
+
+    vud_ime_wait(&r);
+
+    if (r.err) {
+        puts("cannot wait for rank");
+        goto error;
+    }
+
+    uint64_t a[64];
+    uint64_t b[64];
+    uint64_t tgt_c[64];
+
+    for (int i = 0; i < 64; ++i) {
+        a[i] = i;
+        b[i] = 2 * i;
+        tgt_c[i] = a[i] + b[i];
+    }
+
+    vud_broadcast_transfer(&r, 64, &a, 0x0);
+    vud_broadcast_transfer(&r, 64, &b, sizeof(a));
+
+    if (r.err) {
+        puts("cannot transfer inputs");
+        goto error;
+    }
+
+    vud_ime_launch_sk(&r, "../add.sk");
+
+    if (r.err) {
+        puts("failed to launch subkernel");
+        goto error;
+    }
+
+    vud_ime_wait(&r);
+
+    if (r.err) {
+        puts("could not wait for subkernel completion");
+        goto error;
+    }
+
+    uint64_t c[64][64];
+    uint64_t* c_ptr[64];
+
+    for (int i = 0; i < 64; ++i) { c_ptr[i] = &c[i][0]; }
+
+    vud_simple_gather(&r, 64, sizeof(a) + sizeof(b), &c_ptr);
+
+    int errors = 0;
+
+    for (int i = 0; i < 64; ++i) {
+        for (int j = 0; j < 64; ++j) {
+            if (c[i][j] != tgt_c[j]) {
+                printf("[DPU %02o] Value of c[%02d] is %016lx. Should be %02x.\n", i, j, c[i][j], 2 * j);
+                errors += 1;
+            }
+        }
+    }
+
+    if (errors) {
+        printf("Test finished with %d errors.\n", errors);
+    } else {
+        printf("Test finished successfully.\n");
+    }
+
+    vud_rank_free(&r);
+    return 0;
+
+error:
+    printf("VUD Error %d\n", r.err);
+    vud_rank_free(&r);
+    return 1;
+}

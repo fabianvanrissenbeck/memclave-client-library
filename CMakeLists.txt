@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.20)
+project(ime-client-lib C)
+
+set(CMAKE_C_STANDARD 17)
+add_subdirectory(common)
+
+add_library(ime-client-lib src/vud.c src/vud.h src/vud_mem.c src/vud_mem.h src/vud_ime.c src/vud_ime.h)
+target_include_directories(ime-client-lib PUBLIC src)
+target_link_libraries(ime-client-lib PUBLIC common)
+
+add_executable(ime-add-example examples/add.c)
+target_link_libraries(ime-add-example PUBLIC ime-client-lib)
