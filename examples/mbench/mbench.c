@@ -3,10 +3,10 @@
 #include <assert.h>
 #include <stdbool.h>
 
-#include "../src/vud.h"
-#include "../src/vud_mem.h"
-#include "../src/vud_ime.h"
-#include "../src/vud_log.h"
+#include "../../src/vud.h"
+#include "../../src/vud_mem.h"
+#include "../../src/vud_ime.h"
+#include "../../src/vud_log.h"
 #include "support/common.h"    // defines T, dpu_arguments_t, dpu_results_t, etc.
 #include "support/params.h"    // parses command-line into struct Params
 #include "support/timer.h"     // for timing host vs DPU if you want
