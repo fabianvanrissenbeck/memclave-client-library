@@ -10,3 +10,9 @@ target_link_libraries(ime-client-lib PUBLIC common)
 
 add_executable(ime-add-example examples/add.c)
 target_link_libraries(ime-add-example PUBLIC ime-client-lib)
+
+add_executable(ime-mbench-example examples/mbench/mbench.c)
+target_link_libraries(ime-mbench-example PUBLIC ime-client-lib)
+
+add_executable(ime-gemv-example examples/gemv/gemv.c)
+target_link_libraries(ime-gemv-example PUBLIC ime-client-lib)
