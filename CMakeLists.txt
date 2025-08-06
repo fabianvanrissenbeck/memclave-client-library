@@ -19,3 +19,6 @@ target_link_libraries(ime-gemv-example PUBLIC ime-client-lib)
 
 add_executable(ime-mlp-example examples/MLP/mlp.c)
 target_link_libraries(ime-mlp-example PUBLIC ime-client-lib)
+
+add_executable(multi-tasklet examples/multi-tasklet.c)
+target_link_libraries(multi-tasklet PUBLIC ime-client-lib)
