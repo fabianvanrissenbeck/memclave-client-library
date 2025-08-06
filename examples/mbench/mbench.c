@@ -19,9 +19,9 @@
 
 #define NR_TASKLETS 1
 //#define ADD 1
-#define SUB 1
+#define ADD 1
 #define NR_DPUS 64
-#define TEST_DPUS 8
+#define TEST_DPUS 64
 // Pointer declaration
 static T* A;
 static T* B;
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
         // Run DPU kernel
         if(rep >= p.n_warmup)
             start(&timer, 2, rep - p.n_warmup);
-        vud_ime_launch_sk(&r, "../add.sk");
+        vud_ime_launch_sk(&r, "../mbench.sk");
 	vud_ime_wait(&r);
         if(rep >= p.n_warmup)
             stop(&timer, 2);
