@@ -22,3 +22,6 @@ target_link_libraries(ime-mlp-example PUBLIC ime-client-lib)
 
 add_executable(multi-tasklet examples/multi-tasklet.c)
 target_link_libraries(multi-tasklet PUBLIC ime-client-lib)
+
+add_executable(ime-bfs-example examples/BFS/bfs.c)
+target_link_libraries(ime-bfs-example PUBLIC ime-client-lib)
