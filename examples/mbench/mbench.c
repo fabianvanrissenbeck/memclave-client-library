@@ -17,7 +17,7 @@
 #define DEBUG_OFFSET      (MRAM_SIZE_BYTES - 64)
 #define NUM_DEBUG_WORDS   3
 
-#define NR_TASKLETS 1
+#define NR_TASKLETS 16
 //#define ADD 1
 #define ADD 1
 #define NR_DPUS 64
@@ -53,9 +53,9 @@ static void update_host(T* C, T* A, unsigned int nr_elements) {
         C[i] = A[i] / (nr_elements / NR_DPUS);
 #endif
     }
-    printf("expected: A[0]=%x C[0]=%x\n", A[0], C[0]);
-    printf("expected: A[%d]=%x C[1]=%x\n", nr_elements/TEST_DPUS, A[nr_elements/TEST_DPUS], C[nr_elements/TEST_DPUS]);
-    printf("expected: A[%d]=%x C[2]=%x\n", 2*nr_elements/TEST_DPUS, A[2*nr_elements/TEST_DPUS], C[2*nr_elements/TEST_DPUS]);
+    //printf("expected: A[0]=%x C[0]=%x\n", A[0], C[0]);
+    //printf("expected: A[%d]=%x C[1]=%x\n", nr_elements/TEST_DPUS, A[nr_elements/TEST_DPUS], C[nr_elements/TEST_DPUS]);
+    //printf("expected: A[%d]=%x C[2]=%x\n", 2*nr_elements/TEST_DPUS, A[2*nr_elements/TEST_DPUS], C[2*nr_elements/TEST_DPUS]);
 }
 
 #define ARG_OFFSET   0x1000       // safe, at MRAM base
@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
         //return EXIT_FAILURE;
     }
 
-    vud_rank r = vud_rank_alloc(0);
+    vud_rank r = vud_rank_alloc(1);
 
     if (r.err) {
         puts("Cannot allocate rank.");
@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
     // Timer declaration
     Timer timer;
 
-    printf("\tBL\t%d\n", BL);
+    //printf("\tBL\t%d\n", BL);
     uint64_t *zptrs[NR_DPUS];
     const unsigned int input_size_dpu = input_size / nr_of_dpus;
     for (int d = 0; d < nr_of_dpus; ++d) {
@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     // Loop over main kernel
     for(int rep = 0; rep < p.n_warmup + p.n_reps; rep++) {
         size_t size = (input_size_dpu * sizeof(uint64_t) + 7) / 8;
-        printf("inside for size:%d, input_size_dpu:%d, input_size:%d\n", size, input_size_dpu, input_size);
+        //printf("inside for size:%d, input_size_dpu:%d, input_size:%d\n", size, input_size_dpu, input_size);
         vud_simple_transfer(&r,
                             size,
                             &zptrs,
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
                             size,
                             &zptrs,
                             OUTPUT_OFFSET);
-	printf("Zero complete\n");
+	//printf("Zero complete\n");
 
         // Compute output on CPU (performance comparison and verification purposes)
         if(rep >= p.n_warmup)
@@ -140,13 +140,13 @@ int main(int argc, char** argv) {
             stop(&timer, 0);
         //printf("%d: C2[0] %x\n", 0, C2[0]);
 
-        printf("Load input data\n");
+        //printf("Load input data\n");
         if(rep >= p.n_warmup)
             start(&timer, 1, rep - p.n_warmup);
         // Input arguments
         unsigned int kernel = 0;
         dpu_arguments_t input_arguments = {input_size_dpu * sizeof(T), kernel};
-	printf("args: %x\n", input_arguments.size);
+	//printf("args: %x\n", input_arguments.size);
         size_t arg_words = (sizeof(input_arguments) + 7) / 8;
         vud_broadcast_transfer(&r, arg_words, (const void *)&input_arguments, ARG_OFFSET);
         // Copy input arrays
@@ -163,20 +163,24 @@ int main(int argc, char** argv) {
     }
         // 2) compute # of 8‑byte words per DPU
         size_t data_words = (input_size_dpu * sizeof(uint64_t) + 7) / 8;
-        printf("before simple_transfer\n");
+        //printf("before simple_transfer\n");
         vud_simple_transfer(&r,
                             data_words,
                             &host_ptrs,   // note the &
                             DATA_OFFSET);
-        printf("After simple_transfer\n");
+        //printf("After simple_transfer\n");
         if(rep >= p.n_warmup)
             stop(&timer, 1);
 
-        printf("Run program on DPU(s) %d\n", nr_of_dpus);
+        //printf("Run program on DPU(s) %d\n", nr_of_dpus);
         // Run DPU kernel
         if(rep >= p.n_warmup)
             start(&timer, 2, rep - p.n_warmup);
         vud_ime_launch_sk(&r, "../mbench.sk");
+        if (r.err) {
+            puts("Failed to launch.");
+            return 1;
+        }
 	vud_ime_wait(&r);
         if(rep >= p.n_warmup)
             stop(&timer, 2);
@@ -192,7 +196,7 @@ int main(int argc, char** argv) {
         }
 #endif
 
-        printf("Retrieve results\n");
+        //printf("Retrieve results\n");
         if(rep >= p.n_warmup)
             start(&timer, 3, rep - p.n_warmup);
         dpu_results_t results[nr_of_dpus];
@@ -207,7 +211,7 @@ int main(int argc, char** argv) {
     }
 	size_t words = (input_size_dpu * sizeof(T) + 7) / 8;
 	vud_simple_gather(&r, words, OUTPUT_OFFSET, &dsts);
-        printf("Retrieve results complete\n");
+        //printf("Retrieve results complete\n");
 			
 #if PERF
             results[i].cycles = 0;
@@ -290,6 +294,12 @@ int main(int argc, char** argv) {
 
     //uint64_t logs[64][SK_LOG_MAX_ENTRIES];
     //int err = vud_log_read(&r, 64, logs);
+    //if (!err) {
+    //    for (int d = 0; d < NR_DPUS; ++d) {
+    //        printf("DPU %02d log: %d %d %d\n", d, logs[d][0], logs[d][1], logs[d][2]);
+    //    }
+    //}
+    //}
     uint64_t logs[NR_DPUS];
     uint64_t *ptrs[NR_DPUS];
     for (int d = 0; d < nr_of_dpus; ++d) {
@@ -324,7 +334,7 @@ int main(int argc, char** argv) {
     } else {
         for (int d = 0; d < NR_DPUS; ++d) {
             uint64_t v = (uint64_t)logs[d];
-            printf("DPU %02d first element = %x\n", d, v);
+            //printf("DPU %02d first element = %x\n", d, v);
         }
     }
     vud_rank_free(&r);
