@@ -93,7 +93,7 @@ int main(int argc, char **argv) {
 	unsigned int m_size = p.m_size;
 	unsigned int n_size = p.n_size;
 
-        vud_rank r = vud_rank_alloc(0);
+        vud_rank r = vud_rank_alloc(1);
         if (r.err) { 
                 printf(stderr,"rank_alloc failed\n"); return EXIT_FAILURE; 
         }
@@ -316,8 +316,9 @@ int main(int argc, char **argv) {
                             for (unsigned i = nr_of_dpus; i < NR_DPUS; ++i) {
                                 ptrs[i] = ptrs[0];
                             }
+			    size_t c_words = (max_rows_per_dpu * sizeof(T)) / 8;
                             vud_simple_gather(&r,
-                                              max_rows_per_dpu,  /* words per-DPU block */
+                                              c_words,  /* words per-DPU block */
                                               C_off,
                                               (uint64_t(*)[NR_DPUS])&ptrs);
                         }
@@ -436,8 +437,9 @@ int main(int argc, char **argv) {
                 for (unsigned i = nr_of_dpus; i < NR_DPUS; i++) {
                     ptrs[i] = ptrs[0];
                 }
+		size_t c_words = (max_rows_per_dpu * sizeof(T)) / 8;
                 vud_simple_gather(&r,
-                                  max_rows_per_dpu,     /* words per‐DPU block */
+                                  c_words,     /* words per‐DPU block */
                                   C_off,
                                   (uint64_t(*)[NR_DPUS])&ptrs);
                 }
