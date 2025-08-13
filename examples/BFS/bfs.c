@@ -21,6 +21,7 @@
 #include "support/timer.h"
 #include "support/utils.h"
 
+#define TASKLETS       16
 #define NR_DPUS       64
 #define ARG_OFFSET    0x3000
 
@@ -181,6 +182,7 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
             uint32_t dpuVisited_m         = mram_heap_alloc(&allocator, GLOBAL_BM_BYTES);
             uint32_t dpuCurrentFrontier_m = mram_heap_alloc(&allocator, CUR_BM_BYTES);
             uint32_t dpuNextFrontier_m    = mram_heap_alloc(&allocator, GLOBAL_BM_BYTES);
+	    uint32_t dpuNextFrontierPriv_m = mram_heap_alloc(&allocator, GLOBAL_BM_BYTES * TASKLETS);
             PRINT_INFO(p.verbosity >= 2,
                        "        Total memory allocated is %u bytes",
                        allocator.totalAllocated);
@@ -196,7 +198,9 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
             dpuParams[dpuIdx].dpuVisited_m          = dpuVisited_m;
             dpuParams[dpuIdx].dpuCurrentFrontier_m  = dpuCurrentFrontier_m;
             dpuParams[dpuIdx].dpuNextFrontier_m     = dpuNextFrontier_m;
-	    printf("dpuNumNodes:%d, numNodes:%d, dpuStartNodeIdx:%d, dpuNodePtrsOffset:%d, level:%d",
+	    dpuParams[dpuIdx].dpuNextFrontierPriv_m = dpuNextFrontierPriv_m;
+            PRINT_INFO(p.verbosity >= 2,
+	    		"dpuNumNodes:%d, numNodes:%d, dpuStartNodeIdx:%d, dpuNodePtrsOffset:%d, level:%d",
 	    		dpuNumNodes, numNodes, dpuStartNodeIdx, dpuNodePtrsOffset, level);
 
             // Send data to DPU
@@ -333,7 +337,6 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
             return EXIT_FAILURE;
         }
         stopTimer(&timer);
-	printf("DPU run complete\n");
         dpuTime += getElapsedTime(timer);
         PRINT_INFO(p.verbosity >= 2,
                    "    Level DPU Time: %f ms",
@@ -378,7 +381,6 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
 	for(uint32_t t = 0; t < numTiles; ++t) {
 	    frontierCount += __builtin_popcountll(currentFrontier[t]);
 	}
-	printf("  Level %u: frontier size = %u nodes\n", level, frontierCount);
 #endif
 	free(allFrontiers);
 
@@ -502,7 +504,6 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
         }
         ++level;
     }
-    printf("CPU BFS ran %u levels\n", level);
 
     // Verify the result
     PRINT_INFO(p.verbosity >= 1, "Verifying the result");

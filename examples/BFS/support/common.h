@@ -20,6 +20,7 @@ struct DPUParams {
     uint32_t dpuVisited_m;
     uint32_t dpuCurrentFrontier_m;
     uint32_t dpuNextFrontier_m;
+    uint32_t dpuNextFrontierPriv_m;
 };
 
 #endif
