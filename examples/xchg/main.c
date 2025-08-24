@@ -7,6 +7,7 @@
 #include "mbedtls/dhm.h"
 #include "vud_ime.h"
 
+#define IME_DPU_CNTR 0x0
 #define IME_CLIENT_PUBKEY 0x110
 #define IME_DPU_PUBKEY 0x10
 #define VUD_IME_XCHG_1 0x03f20000
@@ -74,12 +75,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-#if 0
-    uint32_t sk_raw[8] = {
-        0xe94dc837, 0x29042514, 0x87826031, 0xcdacd9b0,
-        0x27da09e9, 0x16a9af3c, 0xbc800e02, 0x74fbb2a2  // 0x74fbb2a1,
-    };
-#else
     uint32_t sk_raw[8];
     FILE* fp_rand = fopen("/dev/urandom", "rb");
 
@@ -87,20 +82,23 @@ int main(int argc, char** argv) {
     assert(fread(sk_raw, 1, sizeof(sk_raw), fp_rand) == sizeof(sk_raw));
 
     fclose(fp_rand);
-#endif
 
     mbedtls_mpi pk;
     mbedtls_mpi sk;
     mbedtls_mpi p;
     mbedtls_mpi g;
-    mbedtls_mpi dpu_pk;
-    mbedtls_mpi shared;
+    mbedtls_mpi dpu_pk[64];
+    mbedtls_mpi shared[64];
 
     mbedtls_mpi_init(&pk);
     mbedtls_mpi_init(&sk);
     mbedtls_mpi_init(&p);
     mbedtls_mpi_init(&g);
-    mbedtls_mpi_init(&shared);
+
+    for (int i = 0; i < 64; i++) {
+        mbedtls_mpi_init(&dpu_pk[i]);
+        mbedtls_mpi_init(&shared[i]);
+    }
 
     mbedtls_mpi_read_binary_le(&sk, sk_raw, sizeof(sk_raw));
     mbedtls_mpi_read_binary(&p, mbedtls_dhm_prime, sizeof(mbedtls_dhm_prime));
@@ -109,29 +107,38 @@ int main(int argc, char** argv) {
 
     uint64_t dpu_pub_raw[64][32];
     uint64_t* dpu_pub_raw_ptr[64];
+    uint64_t dpu_ctr[64][2];
+    uint64_t* dpu_ctr_ptr[64];
 
-    for (int i = 0; i < 64; ++i) { dpu_pub_raw_ptr[i] = dpu_pub_raw[i]; }
+    for (int i = 0; i < 64; ++i) {
+        dpu_pub_raw_ptr[i] = dpu_pub_raw[i];
+        dpu_ctr_ptr[i] = dpu_ctr[i];
+    }
 
     vud_simple_gather(&r, 32, IME_DPU_PUBKEY, &dpu_pub_raw_ptr);
+    vud_simple_gather(&r, 2, IME_DPU_CNTR, &dpu_ctr_ptr);
 
     if (r.err) {
         puts("cannot fetch DPU public key");
         return 1;
     }
 
-    mbedtls_mpi_read_binary_le(&dpu_pk, (const uint8_t*) &dpu_pub_raw[0][0], sizeof(dpu_pub_raw[0]));
-    mbedtls_mpi_exp_mod(&shared, &dpu_pk, &sk, &p, NULL);
+    for (int i = 0; i < 64; ++i) {
+        mbedtls_mpi_read_binary_le(&dpu_pk[i], (const uint8_t*) &dpu_pub_raw[i][0], sizeof(dpu_pub_raw[i]));
+        mbedtls_mpi_exp_mod(&shared[i], &dpu_pk[i], &sk, &p, NULL);
+    }
 
-    mbedtls_sha256_context sha_ctx;
-    uint8_t key[32];
+    uint8_t key[64][32];
 
-    mbedtls_sha256_init(&sha_ctx);
-    mbedtls_sha256_starts(&sha_ctx, 0);
-    mbedtls_sha256_update(&sha_ctx, (const uint8_t*) shared.private_p, sizeof(uint64_t) * 32);
-    mbedtls_sha256_update(&sha_ctx, (uint8_t[16]) { 0 }, 16);
-    mbedtls_sha256_finish(&sha_ctx, key);
+    for (int i = 0; i < 64; ++i) {
+        mbedtls_sha256_context sha_ctx;
 
-    buf_to_stdout(32 / 8, key);
+        mbedtls_sha256_init(&sha_ctx);
+        mbedtls_sha256_starts(&sha_ctx, 0);
+        mbedtls_sha256_update(&sha_ctx, (const uint8_t*) shared[i].private_p, sizeof(uint64_t) * 32);
+        mbedtls_sha256_update(&sha_ctx, (const uint8_t*) dpu_ctr[i], 16);
+        mbedtls_sha256_finish(&sha_ctx, key[i]);
+    }
 
     vud_broadcast_transfer(&r, 32, pk.private_p, IME_CLIENT_PUBKEY);
 
@@ -161,7 +168,7 @@ int main(int argc, char** argv) {
     vud_simple_gather(&r, 8, output_addr, &data_ptr);
 
     for (int j = 0; j < 64; ++j) {
-        if (memcmp(&data[j][0], key, 32) != 0) {
+        if (memcmp(&data[j][0], key[j], 32) != 0) {
             printf("========== DPU %02o Failed ==========\n", j);
             buf_to_stdout(8, &data[j][0]);
         }
