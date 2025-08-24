@@ -29,3 +29,5 @@ target_link_libraries(ime-bfs-example PUBLIC ime-client-lib)
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
 
+add_executable(xchg examples/xchg/main.c)
+target_link_libraries(xchg PUBLIC ime-client-lib)

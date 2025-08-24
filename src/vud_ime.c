@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <unistd.h>
 
-#define IME_MSG_BUFFER ((63 << 20) + (512 << 10))
+#define IME_MSG_BUFFER 0x03fc0000
 #define IME_LOAD_BUFFER (IME_MSG_BUFFER + sizeof(ime_mram_msg))
 
 typedef enum ime_mram_msg_type {
@@ -125,6 +125,53 @@ void vud_ime_launch_sk(vud_rank* r, const char* path) {
     ime_mram_msg msg = {
         .type = IME_MRAM_MSG_LOAD_SK,
         .load.ptr = IME_LOAD_BUFFER,
+    };
+
+    const uint64_t* msg_ptr = (const uint64_t*) &msg;
+    uint64_t arr[2] = { msg_ptr[0], msg_ptr[1] };
+
+    vud_broadcast_transfer(r, 2, &arr, IME_MSG_BUFFER);
+
+    if (r->err) { return; }
+    vud_rank_rel_mux(r);
+}
+
+void vud_ime_launch_sk_ext(vud_rank* r, size_t n, const char** paths, const uint64_t* addrs) {
+    if (r->err) { return; }
+
+    /* all DPUs must be in fault before we can transmit any data to MRAM */
+    if (vud_rank_qry_mux(r) != 64) {
+        r->err = VUD_EXPECTED_FAULT;
+    }
+
+    if (r->err) { return; }
+
+    /* make sure that all DPUs requested an MRAM message (makes sure the message subkernel is running) */
+    ime_mram_msg msg_buf[64];
+    poll_ime_msg(r, msg_buf);
+
+    for (int i = 0; i < 64; ++i) {
+        if (msg_buf[i].type != IME_MRAM_MSG_WAITING) {
+            r->err = VUD_NOT_WAITING;
+            return;
+        }
+    }
+
+    for (size_t i = 0; i < n; ++i) {
+        size_t sk_size;
+        uint64_t* sk = (uint64_t*) load_file(paths[i], &sk_size);
+
+        if (sk == NULL) {
+            r->err = VUD_SK_NOT_FOUND;
+            return;
+        }
+
+        vud_broadcast_transfer(r, sk_size / 8, (const uint64_t (*)[]) sk, addrs[i]);
+    }
+
+    ime_mram_msg msg = {
+        .type = IME_MRAM_MSG_LOAD_SK,
+        .load.ptr = addrs[0],
     };
 
     const uint64_t* msg_ptr = (const uint64_t*) &msg;

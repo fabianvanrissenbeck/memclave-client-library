@@ -1,0 +1,95 @@
+#include <stdio.h>
+#include <assert.h>
+
+#include "vud_ime.h"
+
+#define VUD_IME_XCHG_1 0x03f20000
+#define VUD_IME_XCHG_2 0x03f40000
+#define VUD_IME_XCHG_3 0x03f60000
+
+void buf_to_stdout(size_t sz, const uint64_t* buf) {
+    FILE* p = popen("xxd -e -g 8", "w");
+    assert(p != NULL);
+
+    fwrite(buf, 1, sz * sizeof(buf[0]), p);
+    pclose(p);
+}
+
+int main(int argc, char** argv) {
+#if 0
+    if (argc != 2) {
+        puts("debug - Program to run a single subkernel and print the debug output.");
+        puts("Usage: ./debug <subkernel>");
+
+        return 1;
+    }
+#endif
+
+    vud_rank r = vud_rank_alloc(10);
+
+    if (r.err) {
+        puts("Cannot allocate rank.");
+        return 1;
+    }
+
+    vud_ime_wait(&r);
+
+    if (r.err) {
+        puts("Cannot wait for rank.");
+        return 1;
+    }
+
+    vud_mram_addr output_addr = (64 << 20) - 64;
+    vud_broadcast_transfer(&r, 8, &(uint64_t[8]) { 0 }, output_addr);
+
+    if (r.err) {
+        puts("Cannot zero out prior results.");
+        return 1;
+    }
+
+    vud_ime_launch_sk_ext(
+        &r, 3,
+        (const char*[]) { "../xchg1.sk", "../xchg2.sk", "../xchg3.sk" },
+        (const uint64_t[]) { VUD_IME_XCHG_1, VUD_IME_XCHG_2, VUD_IME_XCHG_3 }
+    );
+
+    if (r.err) {
+        printf("Cannot launch subkernel: vud error %d\n", r.err);
+        return 1;
+    }
+
+    vud_ime_wait(&r);
+
+    if (r.err) {
+        puts("cannot wait for client pubkey request");
+        return 1;
+    }
+
+    vud_rank_rel_mux(&r);
+
+    if (r.err) {
+        puts("cannot answer client pubkey request");
+    }
+
+    uint64_t data[64][8];
+    uint64_t* data_ptr[64];
+
+    for (int i = 0; i < 64; ++i) { data_ptr[i] = data[i]; }
+
+    vud_ime_wait(&r);
+
+    if (r.err) {
+        puts("could not wait for subkernel completion");
+        return 1;
+    }
+
+    vud_simple_gather(&r, 8, output_addr, &data_ptr);
+
+    for (int j = 0; j < 64; ++j) {
+        printf("========== DPU %02o ==========\n", j);
+        buf_to_stdout(8, &data[j][0]);
+    }
+
+    vud_rank_free(&r);
+    return 0;
+}
