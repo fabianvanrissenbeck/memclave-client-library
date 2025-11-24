@@ -91,7 +91,7 @@ static void poll_ime_msg(vud_rank* r, ime_mram_msg buf[64]) {
     vud_simple_gather(r, 2, IME_MSG_BUFFER, &ptr);
 }
 
-void vud_ime_launch_sk(vud_rank* r, const char* path) {
+static void vud_check_launchable(vud_rank* r) {
     if (r->err) { return; }
 
     /* all DPUs must be in fault before we can transmit any data to MRAM */
@@ -111,6 +111,36 @@ void vud_ime_launch_sk(vud_rank* r, const char* path) {
             return;
         }
     }
+}
+
+void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel) {
+    static uint64_t sk_addr_table[] = {
+        [VUD_IME_SK_MSG] = 0x3f00000,
+        [VUD_IME_SK_XCHG_1] = 0x3f20000,
+        [VUD_IME_SK_XCHG_2] = 0x3f40000,
+        [VUD_IME_SK_XCHG_3] = 0x3f60000,
+    };
+
+    vud_check_launchable(r);
+    if (r->err) { return; }
+
+    ime_mram_msg msg = {
+        .type = IME_MRAM_MSG_LOAD_SK,
+        .load.ptr = sk_addr_table[kernel],
+    };
+
+    const uint64_t* msg_ptr = (const uint64_t*) &msg;
+    uint64_t arr[2] = { msg_ptr[0], msg_ptr[1] };
+
+    vud_broadcast_transfer(r, 2, &arr, IME_MSG_BUFFER);
+
+    if (r->err) { return; }
+    vud_rank_rel_mux(r);
+}
+
+void vud_ime_launch_sk(vud_rank* r, const char* path) {
+    vud_check_launchable(r);
+    if (r->err) { return; }
 
     size_t sk_size;
     uint64_t* sk = (uint64_t*) load_file(path, &sk_size);

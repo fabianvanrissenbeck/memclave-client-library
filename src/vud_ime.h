@@ -4,12 +4,21 @@
 #include "vud.h"
 #include "vud_mem.h"
 
+typedef enum vud_ime_default_kernel {
+    VUD_IME_SK_MSG = 1,
+    VUD_IME_SK_XCHG_1,
+    VUD_IME_SK_XCHG_2,
+    VUD_IME_SK_XCHG_3,
+} vud_ime_default_kernel;
+
 /**
  * @brief launch a subkernel on a rank of DPUs
  * @param r pointer to the concrete rank
  * @param path path to the subkernel
  */
 void vud_ime_launch_sk(vud_rank* r, const char* path);
+
+void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel);
 
 /**
  * @brief deploy multiple subkernels to a rank of DPUs and launch the first one

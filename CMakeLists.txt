@@ -29,6 +29,11 @@ target_link_libraries(ime-bfs-example PUBLIC ime-client-lib)
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
 
+add_executable(fsl-test examples/fsl-test/main.c)
+target_link_libraries(fsl-test PUBLIC ime-client-lib)
+target_link_libraries(fsl-test PUBLIC mbedcrypto)
+target_include_directories(fsl-test PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/examples/xchg/mbedtls/include)
+
 add_subdirectory(examples/xchg/mbedtls)
 add_executable(xchg examples/xchg/main.c)
 target_link_libraries(xchg PUBLIC ime-client-lib)

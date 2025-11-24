@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define VUD_ALLOC_ANY -1
+
 typedef enum vud_error {
     VUD_OK,
     VUD_RANK_BUSY,
@@ -23,6 +25,7 @@ typedef struct vud_rank {
     volatile void* base;
     int fd;
     vud_error err;
+    uint8_t key[32];
 } vud_rank;
 
 /**
@@ -49,6 +52,32 @@ uint8_t vud_rank_qry_mux(vud_rank* rank);
  * @param rank rank to release MUX on
  */
 void vud_rank_rel_mux(vud_rank* rank);
+
+/**
+ * @brief get an error string corresponding to the passed in value
+ * @param err error value to convert
+ * @return statically allocated string representation
+ */
+static inline const char* vud_error_str(vud_error err) {
+    static const char* table[VUD_NOT_WAITING + 1] = {
+        [VUD_OK] = "success",
+        [VUD_RANK_BUSY] = "rank is busy",
+        [VUD_NOT_FOUND] = "rank not found",
+        [VUD_MEMORY_ERR] = "memory error (mmap)",
+        [VUD_SYSTEM_ERR] = "system error (open)",
+        [VUD_CI_TIMEOUT] = "ci access timed out",
+        [VUD_INVALID_RES] = "invalid VCI response",
+        [VUD_EXPECTED_FAULT] = "DPUs are not all in fault",
+        [VUD_SK_NOT_FOUND] = "could not find requested subkernel",
+        [VUD_NOT_WAITING] = "DPU is not waiting for guest",
+    };
+
+    if (err >= VUD_OK && err <= VUD_NOT_WAITING) {
+        return table[err];
+    }
+
+    return "unknown error";
+}
 
 
 #endif

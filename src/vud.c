@@ -83,25 +83,30 @@ static volatile uint64_t* get_ci_addr(vud_rank* rank) {
 
 vud_rank vud_rank_alloc(int rank_nr) {
     assert(rank_nr >= -1 && rank_nr <= 39);
-    assert(("feature not implemented", rank_nr != -1));
 
-    char path[120];
-    snprintf(path, 120, "/dev/vpim%d", rank_nr);
+    int fd = -1;
 
-    int fd = open(path, O_RDWR, 0);
+    for (int i = 0; i < 40 && fd < 0; ++i) {
+        if (rank_nr >= 0 && i != rank_nr) { continue; }
 
-    if (fd < 0) {
-        vud_error err;
+        char path[120];
+        snprintf(path, 120, "/dev/vpim%d", i);
 
-        if (errno == EBUSY) {
-            err = VUD_RANK_BUSY;
-        } else if (errno == ENOENT) {
-            err = VUD_NOT_FOUND;
-        } else {
-            err = VUD_SYSTEM_ERR;
+        fd = open(path, O_RDWR, 0);
+
+        if (fd < 0) {
+            vud_error err;
+
+            if (errno == EBUSY) {
+                err = VUD_RANK_BUSY;
+            } else if (errno == ENOENT) {
+                err = VUD_NOT_FOUND;
+            } else {
+                err = VUD_SYSTEM_ERR;
+            }
+
+            return new_error(err);
         }
-
-        return new_error(err);
     }
 
     volatile void* ptr = mmap(NULL, RANK_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
