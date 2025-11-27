@@ -32,7 +32,7 @@ void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel);
  * @param common_pk public key to expect of all DPUs - may be NULL
  * @param pk public key to expect from each DPU - preferred if not NULL
  */
-void vud_ime_install_key(vud_rank* r, uint8_t key[32], const uint64_t common_pk[32], const uint64_t pk[64][32]);
+void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t common_pk[32], const uint64_t pk[64][32]);
 
 /**
  * @brief deploy multiple subkernels to a rank of DPUs and launch the first one

@@ -1,5 +1,6 @@
 #include "vud_ime.h"
 
+#include "mbedtls/chachapoly.h"
 #include "mbedtls/bignum.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/dhm.h"
@@ -15,6 +16,7 @@
 #define IME_DPU_CNTR 0x0
 #define IME_CLIENT_PUBKEY 0x110
 #define IME_DPU_PUBKEY 0x10
+#define IME_KEY_IN 0x210
 
 static uint8_t mbedtls_dhm_prime[] = MBEDTLS_DHM_RFC3526_MODP_2048_P_BIN;
 static uint8_t mbedtls_dhm_group[] = MBEDTLS_DHM_RFC3526_MODP_2048_G_BIN;
@@ -229,16 +231,29 @@ void vud_ime_wait(vud_rank* r) {
     wait_for_fault(r);
 }
 
-void vud_ime_install_key(vud_rank* r, uint8_t key[32], const uint64_t common_pk[32], const uint64_t specific_pk[64][32]) {
+void buf_to_stdout(size_t sz, const uint64_t* buf) {
+    FILE* p = popen("xxd -e -g 8", "w");
+    assert(p != NULL);
+
+    fwrite(buf, 1, sz * sizeof(buf[0]), p);
+    pclose(p);
+}
+
+void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t common_pk[32], const uint64_t specific_pk[64][32]) {
     if (r->err) { return; }
 
+    puts("Waiting for DPU");
     vud_ime_wait(r);
+    puts("Done waiting for DPU");
 
     vud_mram_addr output_addr = (64 << 20) - 64;
     vud_broadcast_transfer(r, 8, &(const uint64_t[8]) { 0 }, output_addr);
 
     vud_ime_launch_default(r, VUD_IME_SK_XCHG_1);
+    puts("Launched XCHG1");
+
     vud_ime_wait(r);
+    puts("Received Pubkey Request");
 
     uint32_t sk_raw[8];
     FILE* fp_rand = fopen("/dev/urandom", "rb");
@@ -285,6 +300,19 @@ void vud_ime_install_key(vud_rank* r, uint8_t key[32], const uint64_t common_pk[
 
     if (r->err) { return; }
 
+    if (specific_pk || common_pk) {
+        for (int i = 0; i < 64; ++i) {
+            const uint64_t* good_pk = specific_pk ? specific_pk[i] : common_pk;
+
+            if (memcmp(dpu_pub_raw[i], good_pk, sizeof(dpu_pub_raw[i])) != 0) {
+                puts("DPU offered unknown public key");
+                r->err = VUD_KEY_XCHG;
+            }
+        }
+    }
+
+    if (r->err) { return; }
+
     for (int i = 0; i < 64; ++i) {
         mbedtls_mpi_read_binary_le(&dpu_pk[i], (const uint8_t*) &dpu_pub_raw[i][0], sizeof(dpu_pub_raw[i]));
         mbedtls_mpi_exp_mod(&shared[i], &dpu_pk[i], &sk, &p, NULL);
@@ -300,10 +328,31 @@ void vud_ime_install_key(vud_rank* r, uint8_t key[32], const uint64_t common_pk[
         mbedtls_sha256_update(&sha_ctx, (const uint8_t*) shared[i].private_p, sizeof(uint64_t) * 32);
         mbedtls_sha256_update(&sha_ctx, (const uint8_t*) dpu_ctr[i], 16);
         mbedtls_sha256_finish(&sha_ctx, shared_sec[i]);
+
+        if (i == 0) {
+            buf_to_stdout(sizeof(shared_sec[i]) / sizeof(uint64_t), (const uint64_t*) &shared_sec[i][0]);
+        }
     }
 
+    uint8_t key_in[64][32 + 16];
+    const uint64_t* key_in_ptr[64];
+
+    for (int i = 0; i < 64; ++i) {
+        mbedtls_chachapoly_context ctx;
+
+        mbedtls_chachapoly_init(&ctx);
+        mbedtls_chachapoly_setkey(&ctx, shared_sec[i]);
+        mbedtls_chachapoly_encrypt_and_tag(&ctx, 32, (uint8_t[12]) { 0 }, NULL, 0, key, &key_in[i][0], &key_in[i][32]);
+        mbedtls_chachapoly_free(&ctx);
+
+        key_in_ptr[i] = (const uint64_t*) &key_in[i][0];
+    }
+
+    vud_simple_transfer(r, 6, &key_in_ptr, IME_KEY_IN);
     vud_broadcast_transfer(r, 32, pk.private_p, IME_CLIENT_PUBKEY);
     vud_rank_rel_mux(r);
+
+    puts("Answered PubKey Request");
     vud_ime_wait(r);
 
     uint64_t data[64][8];
@@ -316,9 +365,9 @@ void vud_ime_install_key(vud_rank* r, uint8_t key[32], const uint64_t common_pk[
     if (r->err) { return; }
 
     for (int j = 0; j < 64; ++j) {
-        if (memcmp(&data[j][0], shared_sec[j], 32) != 0) {
-            // printf("========== DPU %02o Failed ==========\n", j);
-            // buf_to_stdout(8, &data[j][0]);
+        if (memcmp(&data[j][0], key, 32) != 0) {
+            printf("========== DPU %02o Failed ==========\n", j);
+            buf_to_stdout(8, &data[j][0]);
             r->err = VUD_KEY_XCHG;
         }
     }
