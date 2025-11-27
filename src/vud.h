@@ -19,6 +19,7 @@ typedef enum vud_error {
     VUD_EXPECTED_FAULT,
     VUD_SK_NOT_FOUND,
     VUD_NOT_WAITING,
+    VUD_KEY_XCHG,
 } vud_error;
 
 typedef struct vud_rank {
@@ -59,7 +60,7 @@ void vud_rank_rel_mux(vud_rank* rank);
  * @return statically allocated string representation
  */
 static inline const char* vud_error_str(vud_error err) {
-    static const char* table[VUD_NOT_WAITING + 1] = {
+    static const char* table[VUD_KEY_XCHG + 1] = {
         [VUD_OK] = "success",
         [VUD_RANK_BUSY] = "rank is busy",
         [VUD_NOT_FOUND] = "rank not found",
@@ -70,9 +71,10 @@ static inline const char* vud_error_str(vud_error err) {
         [VUD_EXPECTED_FAULT] = "DPUs are not all in fault",
         [VUD_SK_NOT_FOUND] = "could not find requested subkernel",
         [VUD_NOT_WAITING] = "DPU is not waiting for guest",
+        [VUD_KEY_XCHG] = "key exchange failed",
     };
 
-    if (err >= VUD_OK && err <= VUD_NOT_WAITING) {
+    if (err >= VUD_OK && err <= VUD_KEY_XCHG) {
         return table[err];
     }
 

@@ -6,7 +6,9 @@ add_subdirectory(common)
 
 add_library(ime-client-lib src/vud.c src/vud.h src/vud_mem.c src/vud_mem.h src/vud_ime.c src/vud_ime.h)
 target_include_directories(ime-client-lib PUBLIC src)
+target_include_directories(ime-client-lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples/xchg/mbedtls/include)
 target_link_libraries(ime-client-lib PUBLIC common)
+target_link_libraries(ime-client-lib PUBLIC mbedcrypto)
 
 add_executable(ime-add-example examples/add.c)
 target_link_libraries(ime-add-example PUBLIC ime-client-lib)

@@ -1,12 +1,23 @@
 #include "vud_ime.h"
 
+#include "mbedtls/bignum.h"
+#include "mbedtls/sha256.h"
+#include "mbedtls/dhm.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <unistd.h>
+#include <string.h>
 
 #define IME_MSG_BUFFER 0x03fc0000
 #define IME_LOAD_BUFFER (IME_MSG_BUFFER + sizeof(ime_mram_msg))
+#define IME_DPU_CNTR 0x0
+#define IME_CLIENT_PUBKEY 0x110
+#define IME_DPU_PUBKEY 0x10
+
+static uint8_t mbedtls_dhm_prime[] = MBEDTLS_DHM_RFC3526_MODP_2048_P_BIN;
+static uint8_t mbedtls_dhm_group[] = MBEDTLS_DHM_RFC3526_MODP_2048_G_BIN;
 
 typedef enum ime_mram_msg_type {
     IME_MRAM_MSG_NOP,
@@ -216,4 +227,99 @@ void vud_ime_launch_sk_ext(vud_rank* r, size_t n, const char** paths, const uint
 void vud_ime_wait(vud_rank* r) {
     if (r->err) { return; }
     wait_for_fault(r);
+}
+
+void vud_ime_install_key(vud_rank* r, uint8_t key[32], const uint64_t common_pk[32], const uint64_t specific_pk[64][32]) {
+    if (r->err) { return; }
+
+    vud_ime_wait(r);
+
+    vud_mram_addr output_addr = (64 << 20) - 64;
+    vud_broadcast_transfer(r, 8, &(const uint64_t[8]) { 0 }, output_addr);
+
+    vud_ime_launch_default(r, VUD_IME_SK_XCHG_1);
+    vud_ime_wait(r);
+
+    uint32_t sk_raw[8];
+    FILE* fp_rand = fopen("/dev/urandom", "rb");
+
+    assert(fp_rand != NULL);
+    assert(fread(sk_raw, 1, sizeof(sk_raw), fp_rand) == sizeof(sk_raw));
+
+    fclose(fp_rand);
+
+    mbedtls_mpi pk;
+    mbedtls_mpi sk;
+    mbedtls_mpi p;
+    mbedtls_mpi g;
+    mbedtls_mpi dpu_pk[64];
+    mbedtls_mpi shared[64];
+
+    mbedtls_mpi_init(&pk);
+    mbedtls_mpi_init(&sk);
+    mbedtls_mpi_init(&p);
+    mbedtls_mpi_init(&g);
+
+    for (int i = 0; i < 64; i++) {
+        mbedtls_mpi_init(&dpu_pk[i]);
+        mbedtls_mpi_init(&shared[i]);
+    }
+
+    mbedtls_mpi_read_binary_le(&sk, sk_raw, sizeof(sk_raw));
+    mbedtls_mpi_read_binary(&p, mbedtls_dhm_prime, sizeof(mbedtls_dhm_prime));
+    mbedtls_mpi_read_binary(&g, mbedtls_dhm_group, sizeof(mbedtls_dhm_group));
+    mbedtls_mpi_exp_mod(&pk, &g, &sk, &p, NULL);
+
+    uint64_t dpu_pub_raw[64][32];
+    uint64_t* dpu_pub_raw_ptr[64];
+    uint64_t dpu_ctr[64][2];
+    uint64_t* dpu_ctr_ptr[64];
+
+    for (int i = 0; i < 64; ++i) {
+        dpu_pub_raw_ptr[i] = dpu_pub_raw[i];
+        dpu_ctr_ptr[i] = dpu_ctr[i];
+    }
+
+    vud_simple_gather(r, 32, IME_DPU_PUBKEY, &dpu_pub_raw_ptr);
+    vud_simple_gather(r, 2, IME_DPU_CNTR, &dpu_ctr_ptr);
+
+    if (r->err) { return; }
+
+    for (int i = 0; i < 64; ++i) {
+        mbedtls_mpi_read_binary_le(&dpu_pk[i], (const uint8_t*) &dpu_pub_raw[i][0], sizeof(dpu_pub_raw[i]));
+        mbedtls_mpi_exp_mod(&shared[i], &dpu_pk[i], &sk, &p, NULL);
+    }
+
+    uint8_t shared_sec[64][32];
+
+    for (int i = 0; i < 64; ++i) {
+        mbedtls_sha256_context sha_ctx;
+
+        mbedtls_sha256_init(&sha_ctx);
+        mbedtls_sha256_starts(&sha_ctx, 0);
+        mbedtls_sha256_update(&sha_ctx, (const uint8_t*) shared[i].private_p, sizeof(uint64_t) * 32);
+        mbedtls_sha256_update(&sha_ctx, (const uint8_t*) dpu_ctr[i], 16);
+        mbedtls_sha256_finish(&sha_ctx, shared_sec[i]);
+    }
+
+    vud_broadcast_transfer(r, 32, pk.private_p, IME_CLIENT_PUBKEY);
+    vud_rank_rel_mux(r);
+    vud_ime_wait(r);
+
+    uint64_t data[64][8];
+    uint64_t* data_ptr[64];
+
+    for (int i = 0; i < 64; ++i) { data_ptr[i] = data[i]; }
+
+    vud_simple_gather(r, 8, output_addr, &data_ptr);
+
+    if (r->err) { return; }
+
+    for (int j = 0; j < 64; ++j) {
+        if (memcmp(&data[j][0], shared_sec[j], 32) != 0) {
+            // printf("========== DPU %02o Failed ==========\n", j);
+            // buf_to_stdout(8, &data[j][0]);
+            r->err = VUD_KEY_XCHG;
+        }
+    }
 }

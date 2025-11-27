@@ -18,7 +18,21 @@ typedef enum vud_ime_default_kernel {
  */
 void vud_ime_launch_sk(vud_rank* r, const char* path);
 
+/**
+ * @brief launch on of the system subkernels
+ * @param r rank to launch on
+ * @param kernel chosen subkernel - note that the xchg sks call each other
+ */
 void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel);
+
+/**
+ * @brief perform a key exchange with the rank and install a new user key
+ * @param r rank to install key on
+ * @param key 256-bit key to install
+ * @param common_pk public key to expect of all DPUs - may be NULL
+ * @param pk public key to expect from each DPU - preferred if not NULL
+ */
+void vud_ime_install_key(vud_rank* r, uint8_t key[32], const uint64_t common_pk[32], const uint64_t pk[64][32]);
 
 /**
  * @brief deploy multiple subkernels to a rank of DPUs and launch the first one

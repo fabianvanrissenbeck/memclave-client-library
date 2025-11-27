@@ -33,141 +33,15 @@ int main(void) {
         return -1;
     }
 
-    vud_ime_wait(&r);
+    vud_ime_install_key(&r, NULL, NULL, NULL);
 
     if (r.err) {
-        printf("cannot wait for rank: %s\n", vud_error_str(r.err));
+        printf("cannot exchange keys: %s\n", vud_error_str(r.err));
         return -1;
-    }
-
-    vud_mram_addr output_addr = (64 << 20) - 64;
-    vud_broadcast_transfer(&r, 8, &(uint64_t[8]) { 0 }, output_addr);
-
-    if (r.err) {
-        puts("Cannot zero out prior results.");
-        return 1;
-    }
-
-    vud_ime_launch_default(&r, VUD_IME_SK_XCHG_1);
-
-    if (r.err) {
-        printf("cannot launch exchange subkernel: %s\n", vud_error_str(r.err));
-        return -1;
-    }
-
-    vud_ime_wait(&r);
-
-    if (r.err) {
-        puts("cannot wait for client pubkey request");
-        return 1;
-    }
-
-    puts("Received pubkey request.");
-
-    uint32_t sk_raw[8];
-    FILE* fp_rand = fopen("/dev/urandom", "rb");
-
-    assert(fp_rand != NULL);
-    assert(fread(sk_raw, 1, sizeof(sk_raw), fp_rand) == sizeof(sk_raw));
-
-    fclose(fp_rand);
-
-    mbedtls_mpi pk;
-    mbedtls_mpi sk;
-    mbedtls_mpi p;
-    mbedtls_mpi g;
-    mbedtls_mpi dpu_pk[64];
-    mbedtls_mpi shared[64];
-
-    mbedtls_mpi_init(&pk);
-    mbedtls_mpi_init(&sk);
-    mbedtls_mpi_init(&p);
-    mbedtls_mpi_init(&g);
-
-    for (int i = 0; i < 64; i++) {
-        mbedtls_mpi_init(&dpu_pk[i]);
-        mbedtls_mpi_init(&shared[i]);
-    }
-
-    mbedtls_mpi_read_binary_le(&sk, sk_raw, sizeof(sk_raw));
-    mbedtls_mpi_read_binary(&p, mbedtls_dhm_prime, sizeof(mbedtls_dhm_prime));
-    mbedtls_mpi_read_binary(&g, mbedtls_dhm_group, sizeof(mbedtls_dhm_group));
-    mbedtls_mpi_exp_mod(&pk, &g, &sk, &p, NULL);
-
-    uint64_t dpu_pub_raw[64][32];
-    uint64_t* dpu_pub_raw_ptr[64];
-    uint64_t dpu_ctr[64][2];
-    uint64_t* dpu_ctr_ptr[64];
-
-    for (int i = 0; i < 64; ++i) {
-        dpu_pub_raw_ptr[i] = dpu_pub_raw[i];
-        dpu_ctr_ptr[i] = dpu_ctr[i];
-    }
-
-    vud_simple_gather(&r, 32, IME_DPU_PUBKEY, &dpu_pub_raw_ptr);
-    vud_simple_gather(&r, 2, IME_DPU_CNTR, &dpu_ctr_ptr);
-
-    if (r.err) {
-        puts("cannot fetch DPU public key");
-        return 1;
-    }
-
-    for (int i = 0; i < 64; ++i) {
-        mbedtls_mpi_read_binary_le(&dpu_pk[i], (const uint8_t*) &dpu_pub_raw[i][0], sizeof(dpu_pub_raw[i]));
-        mbedtls_mpi_exp_mod(&shared[i], &dpu_pk[i], &sk, &p, NULL);
-    }
-
-    uint8_t key[64][32];
-
-    for (int i = 0; i < 64; ++i) {
-        mbedtls_sha256_context sha_ctx;
-
-        mbedtls_sha256_init(&sha_ctx);
-        mbedtls_sha256_starts(&sha_ctx, 0);
-        mbedtls_sha256_update(&sha_ctx, (const uint8_t*) shared[i].private_p, sizeof(uint64_t) * 32);
-        mbedtls_sha256_update(&sha_ctx, (const uint8_t*) dpu_ctr[i], 16);
-        mbedtls_sha256_finish(&sha_ctx, key[i]);
-    }
-
-    vud_broadcast_transfer(&r, 32, pk.private_p, IME_CLIENT_PUBKEY);
-
-    if (r.err) {
-        puts("cannot share public key");
-        return 1;
-    }
-
-    vud_rank_rel_mux(&r);
-
-    if (r.err) {
-        puts("cannot answer client pubkey request");
-        return 1;
-    }
-
-    puts("Answered pubkey request.");
-
-    uint64_t data[64][8];
-    uint64_t* data_ptr[64];
-
-    for (int i = 0; i < 64; ++i) { data_ptr[i] = data[i]; }
-
-    vud_ime_wait(&r);
-
-    if (r.err) {
-        puts("could not wait for subkernel completion");
-        return 1;
-    }
-
-    vud_simple_gather(&r, 8, output_addr, &data_ptr);
-
-    for (int j = 0; j < 64; ++j) {
-        if (memcmp(&data[j][0], key[j], 32) != 0) {
-            printf("========== DPU %02o Failed ==========\n", j);
-            buf_to_stdout(8, &data[j][0]);
-        }
     }
 
     puts("Done.");
-
     vud_rank_free(&r);
+
     return 0;
 }
