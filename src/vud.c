@@ -85,6 +85,7 @@ vud_rank vud_rank_alloc(int rank_nr) {
     assert(rank_nr >= -1 && rank_nr <= 39);
 
     int fd = -1;
+    vud_error err = VUD_NOT_FOUND;
 
     for (int i = 0; i < 40 && fd < 0; ++i) {
         if (rank_nr >= 0 && i != rank_nr) { continue; }
@@ -95,18 +96,18 @@ vud_rank vud_rank_alloc(int rank_nr) {
         fd = open(path, O_RDWR, 0);
 
         if (fd < 0) {
-            vud_error err;
-
-            if (errno == EBUSY) {
-                err = VUD_RANK_BUSY;
-            } else if (errno == ENOENT) {
-                err = VUD_NOT_FOUND;
-            } else {
-                err = VUD_SYSTEM_ERR;
+            if (err == VUD_NOT_FOUND) {
+                if (errno == EBUSY) {
+                    err = VUD_RANK_BUSY;
+                } else {
+                    err = VUD_SYSTEM_ERR;
+                }
             }
-
-            return new_error(err);
         }
+    }
+
+    if (fd < 0) {
+        return new_error(err);
     }
 
     volatile void* ptr = mmap(NULL, RANK_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
