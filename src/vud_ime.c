@@ -18,6 +18,10 @@
 #define IME_DPU_PUBKEY 0x10
 #define IME_KEY_IN 0x210
 
+#define IME_XCHG_OUT 0x0
+#define IME_XCHG_SIZE 0x40
+#define IME_XCHG_CONFIRM "Exchange Succeeded Successfully!"
+
 static uint8_t mbedtls_dhm_prime[] = MBEDTLS_DHM_RFC3526_MODP_2048_P_BIN;
 static uint8_t mbedtls_dhm_group[] = MBEDTLS_DHM_RFC3526_MODP_2048_G_BIN;
 
@@ -233,18 +237,18 @@ void buf_to_stdout(size_t sz, const uint64_t* buf) {
 void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t common_pk[32], const uint64_t specific_pk[64][32]) {
     if (r->err) { return; }
 
-    puts("Waiting for DPU");
+    // puts("Waiting for DPU");
     vud_ime_wait(r);
-    puts("Done waiting for DPU");
+    // puts("Done waiting for DPU");
 
     vud_mram_addr output_addr = (64 << 20) - 64;
     vud_broadcast_transfer(r, 8, &(const uint64_t[8]) { 0 }, output_addr);
 
     vud_ime_launch_default(r, VUD_IME_SK_XCHG_1);
-    puts("Launched XCHG1");
+    // puts("Launched XCHG1");
 
     vud_ime_wait(r);
-    puts("Received Pubkey Request");
+    // puts("Received Pubkey Request");
 
     uint32_t sk_raw[8];
     FILE* fp_rand = fopen("/dev/urandom", "rb");
@@ -343,9 +347,40 @@ void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t comm
     vud_broadcast_transfer(r, 32, pk.private_p, IME_CLIENT_PUBKEY);
     vud_rank_rel_mux(r);
 
-    puts("Answered PubKey Request");
+    // puts("Answered PubKey Request");
     vud_ime_wait(r);
 
+    uint64_t data[64][8];
+    uint64_t* data_ptr[64];
+
+    for (int i = 0; i < 64; ++i) { data_ptr[i] = data[i]; }
+    vud_simple_gather(r, IME_XCHG_SIZE / sizeof(uint64_t), IME_XCHG_OUT, &data_ptr);
+
+    if (r->err) { return; }
+
+    for (int j = 0; j < 64; ++j) {
+        uint8_t* buf = (uint8_t*) &data[j][0]; // 32 bytes
+        const uint8_t* tag = (uint8_t*) &data[j][4]; // 16 bytes
+        const uint8_t* iv = (uint8_t*) &data[j][6]; // 12 bytes
+
+        mbedtls_chachapoly_context ctx;
+        mbedtls_chachapoly_init(&ctx);
+        mbedtls_chachapoly_setkey(&ctx, key);
+
+        if (mbedtls_chachapoly_auth_decrypt(&ctx, 32, iv, NULL, 0, tag, buf, buf) != 0) {
+            printf("Exchange with DPU %02o failed.\n", j);
+            r->err = VUD_KEY_XCHG;
+
+            continue;
+        }
+
+        if (memcmp(buf, IME_XCHG_CONFIRM, 32) != 0) {
+            printf("Exchange with DPU %02o failed.\n", j);
+            r->err = VUD_KEY_XCHG;
+        }
+    }
+
+#if 0
     uint64_t data[64][8];
     uint64_t* data_ptr[64];
 
@@ -362,4 +397,5 @@ void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t comm
             r->err = VUD_KEY_XCHG;
         }
     }
+#endif
 }
