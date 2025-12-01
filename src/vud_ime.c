@@ -323,10 +323,6 @@ void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t comm
         mbedtls_sha256_update(&sha_ctx, (const uint8_t*) shared[i].private_p, sizeof(uint64_t) * 32);
         mbedtls_sha256_update(&sha_ctx, (const uint8_t*) dpu_ctr[i], 16);
         mbedtls_sha256_finish(&sha_ctx, shared_sec[i]);
-
-        if (i == 0) {
-            buf_to_stdout(sizeof(shared_sec[i]) / sizeof(uint64_t), (const uint64_t*) &shared_sec[i][0]);
-        }
     }
 
     uint8_t key_in[64][32 + 16];
@@ -378,6 +374,10 @@ void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t comm
             printf("Exchange with DPU %02o failed.\n", j);
             r->err = VUD_KEY_XCHG;
         }
+    }
+
+    if (!r->err) {
+        memcpy(r->key, key, 32);
     }
 
 #if 0

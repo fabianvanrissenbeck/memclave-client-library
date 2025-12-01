@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 int main(void) {
-    vud_rank r = vud_rank_alloc(0);
+    vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
 
     if (r.err) {
         puts("Cannot allocate rank.");
@@ -16,6 +16,17 @@ int main(void) {
 
     if (r.err) {
         puts("cannot wait for rank");
+        goto error;
+    }
+
+    uint8_t key[32];
+
+    for (unsigned i = 0; i < 32; ++i) { key[i] = 0x80 + i; }
+
+    vud_ime_install_key(&r, key, NULL, NULL);
+
+    if (r.err) {
+        puts("key exchange failed");
         goto error;
     }
 
@@ -63,7 +74,7 @@ int main(void) {
     for (int i = 0; i < 64; ++i) {
         for (int j = 0; j < 64; ++j) {
             if (c[i][j] != tgt_c[j]) {
-                printf("[DPU %02o] Value of c[%02d] is %016lx. Should be %02x.\n", i, j, c[i][j], 2 * j);
+                printf("[DPU %02o] Value of c[%02d] is %016lx. Should be %02lx.\n", i, j, c[i][j], tgt_c[j]);
                 errors += 1;
             }
         }
@@ -79,7 +90,7 @@ int main(void) {
     return 0;
 
 error:
-    printf("VUD Error %d\n", r.err);
+    printf("VUD Error %s\n", vud_error_str(r.err));
     vud_rank_free(&r);
     return 1;
 }
