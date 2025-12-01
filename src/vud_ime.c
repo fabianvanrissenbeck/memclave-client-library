@@ -26,29 +26,21 @@ typedef enum ime_mram_msg_type {
     IME_MRAM_MSG_WAITING,
     IME_MRAM_MSG_PING,
     IME_MRAM_MSG_PONG,
-    IME_MRAM_MSG_READ_WRAM,
-    IME_MRAM_MSG_WRITE_WRAM,
     IME_MRAM_MSG_LOAD_SK,
 } ime_mram_msg_type;
 
-typedef struct ime_mram_msg {
-    uint32_t type;
-    union {
-        struct {
-            uint32_t addr;
-            uint32_t value;
-        } wram;
-        struct {
-            uint32_t ptr;
-        } load;
-        struct {
-            uint32_t pad[3];
-        };
-    };
-} ime_mram_msg;
+typedef enum ime_load_sk_flags {
+    IME_LOAD_SK_USER_KEY = 1 << 0,
+} ime_load_sk_flags;
 
-_Static_assert(__builtin_offsetof(ime_mram_msg, wram.addr) == 4, "incorrect alignment");
-_Static_assert(__builtin_offsetof(ime_mram_msg, wram.value) == 8, "incorrect alignment");
+typedef union ime_mram_msg {
+    struct {
+        uint16_t type;
+        uint16_t flags;
+        uint32_t ptr;
+    };
+    uint64_t raw;
+} ime_mram_msg;
 
 static void wait_for_fault(vud_rank* r) {
     uint8_t n_faulted = 0;
@@ -98,10 +90,10 @@ static void poll_ime_msg(vud_rank* r, ime_mram_msg buf[64]) {
     uint64_t* ptr[64];
 
     for (int i = 0; i < 64; i++) {
-        ptr[i] = (uint64_t*) &buf[i];
+        ptr[i] = &buf[i].raw;
     }
 
-    vud_simple_gather(r, 2, IME_MSG_BUFFER, &ptr);
+    vud_simple_gather(r, 1, IME_MSG_BUFFER, &ptr);
 }
 
 static void vud_check_launchable(vud_rank* r) {
@@ -139,13 +131,12 @@ void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel) {
 
     ime_mram_msg msg = {
         .type = IME_MRAM_MSG_LOAD_SK,
-        .load.ptr = sk_addr_table[kernel],
+        .ptr = sk_addr_table[kernel],
+        .flags = 0
     };
 
-    const uint64_t* msg_ptr = (const uint64_t*) &msg;
-    uint64_t arr[2] = { msg_ptr[0], msg_ptr[1] };
-
-    vud_broadcast_transfer(r, 2, &arr, IME_MSG_BUFFER);
+    const uint64_t arr[1] = { msg.raw };
+    vud_broadcast_transfer(r, 1, &arr, IME_MSG_BUFFER);
 
     if (r->err) { return; }
     vud_rank_rel_mux(r);
@@ -167,13 +158,12 @@ void vud_ime_launch_sk(vud_rank* r, const char* path) {
 
     ime_mram_msg msg = {
         .type = IME_MRAM_MSG_LOAD_SK,
-        .load.ptr = IME_LOAD_BUFFER,
+        .ptr = IME_LOAD_BUFFER,
+        .flags = 0
     };
 
-    const uint64_t* msg_ptr = (const uint64_t*) &msg;
-    uint64_t arr[2] = { msg_ptr[0], msg_ptr[1] };
-
-    vud_broadcast_transfer(r, 2, &arr, IME_MSG_BUFFER);
+    uint64_t arr[1] = { msg.raw };
+    vud_broadcast_transfer(r, 1, &arr, IME_MSG_BUFFER);
 
     if (r->err) { return; }
     vud_rank_rel_mux(r);
@@ -214,13 +204,14 @@ void vud_ime_launch_sk_ext(vud_rank* r, size_t n, const char** paths, const uint
 
     ime_mram_msg msg = {
         .type = IME_MRAM_MSG_LOAD_SK,
-        .load.ptr = addrs[0],
+        .ptr = addrs[0],
+        .flags = 0
     };
 
     const uint64_t* msg_ptr = (const uint64_t*) &msg;
     uint64_t arr[2] = { msg_ptr[0], msg_ptr[1] };
 
-    vud_broadcast_transfer(r, 2, &arr, IME_MSG_BUFFER);
+    vud_broadcast_transfer(r, 1, &arr, IME_MSG_BUFFER);
 
     if (r->err) { return; }
     vud_rank_rel_mux(r);
