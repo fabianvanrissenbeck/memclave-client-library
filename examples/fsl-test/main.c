@@ -1,32 +1,41 @@
 #include <vud.h>
+#include <vud_sk.h>
 #include <vud_mem.h>
 #include <vud_ime.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
-#define IME_DPU_CNTR 0x0
-#define IME_CLIENT_PUBKEY 0x110
-#define IME_DPU_PUBKEY 0x10
-
 int main(void) {
-    vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
+    uint64_t* buf = malloc(128 << 10);
+    assert(buf != NULL);
 
-    if (r.err) {
-        printf("cannot allocate rank: %s\n", vud_error_str(r.err));
+    long sz = vud_sk_from_elf("../add", 128 << 10, buf);
+
+    if (sz < 0) {
+        puts("cannot load subkernel");
         return -1;
     }
 
-    vud_ime_install_key(&r, (uint8_t[32]) { 0x12, 0x34 }, NULL, NULL);
+    uint8_t key[32];
 
-    if (r.err) {
-        printf("cannot exchange keys: %s\n", vud_error_str(r.err));
+    for (int i = 0; i < 32; ++i) { key[i] = 0x80 + i; }
+
+    int res = vud_enc_auth_sk(buf, key);
+
+    if (res < 0) {
+        puts("cannot encrypt subkernel");
         return -1;
     }
 
-    puts("Done.");
-    vud_rank_free(&r);
+    FILE* fp = fopen("tmp.sk", "wb");
+    assert(fp != NULL);
 
+    fwrite(buf, 1, sz, fp);
+    fclose(fp);
+
+    free(buf);
     return 0;
 }
