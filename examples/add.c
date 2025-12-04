@@ -1,8 +1,18 @@
-#include "../src/vud.h"
-#include "../src/vud_mem.h"
-#include "../src/vud_ime.h"
+#include <vud.h>
+#include <vud_mem.h>
+#include <vud_ime.h>
 
 #include <stdio.h>
+#include <assert.h>
+
+static void random_key(uint8_t key[32]) {
+    FILE* fp = fopen("/dev/urandom", "rb");
+
+    assert(fp != NULL);
+    assert(fread(key, 1, 32, fp) == 32);
+
+    fclose(fp);
+}
 
 int main(void) {
     vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
@@ -20,8 +30,7 @@ int main(void) {
     }
 
     uint8_t key[32];
-
-    for (unsigned i = 0; i < 32; ++i) { key[i] = 0x80 + i; }
+    random_key(key);
 
     vud_ime_install_key(&r, key, NULL, NULL);
 
@@ -48,7 +57,7 @@ int main(void) {
         goto error;
     }
 
-    vud_ime_launch_sk(&r, "../add.sk");
+    vud_ime_launch(&r, "../add");
 
     if (r.err) {
         puts("failed to launch subkernel");

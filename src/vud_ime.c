@@ -1,3 +1,4 @@
+#include "vud_sk.h"
 #include "vud_ime.h"
 
 #include "mbedtls/chachapoly.h"
@@ -146,6 +147,39 @@ void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel) {
     vud_rank_rel_mux(r);
 }
 
+void vud_ime_launch(vud_rank* r, const char* path) {
+    vud_check_launchable(r);
+    if (r->err) { return; }
+
+    uint64_t* sk_buf = calloc(1, 128 << 10);
+    assert(sk_buf != NULL);
+
+    long sk_size = vud_sk_from_elf(path, 128 << 10, sk_buf);
+
+    if (sk_size < 0) {
+        r->err = VUD_SK_NOT_FOUND;
+        return;
+    }
+
+    if (vud_enc_auth_sk(sk_buf, r->key) < 0) {
+        r->err = VUD_SK_TAG;
+        return;
+    }
+
+    vud_broadcast_transfer(r, sk_size / sizeof(uint64_t), (const uint64_t (*)[]) sk_buf, IME_LOAD_BUFFER);
+
+    ime_mram_msg msg = {
+        .type = IME_MRAM_MSG_LOAD_SK,
+        .ptr = IME_LOAD_BUFFER,
+        .flags = IME_LOAD_SK_USER_KEY
+    };
+
+    vud_broadcast_transfer(r, 1, &msg.raw, IME_MSG_BUFFER);
+
+    if (r->err) { return; }
+    vud_rank_rel_mux(r);
+}
+
 void vud_ime_launch_sk(vud_rank* r, const char* path) {
     vud_check_launchable(r);
     if (r->err) { return; }
@@ -163,7 +197,7 @@ void vud_ime_launch_sk(vud_rank* r, const char* path) {
     ime_mram_msg msg = {
         .type = IME_MRAM_MSG_LOAD_SK,
         .ptr = IME_LOAD_BUFFER,
-        .flags = 0
+        .flags = IME_LOAD_SK_USER_KEY
     };
 
     uint64_t arr[1] = { msg.raw };
@@ -209,7 +243,7 @@ void vud_ime_launch_sk_ext(vud_rank* r, size_t n, const char** paths, const uint
     ime_mram_msg msg = {
         .type = IME_MRAM_MSG_LOAD_SK,
         .ptr = addrs[0],
-        .flags = 0
+        .flags = IME_LOAD_SK_USER_KEY
     };
 
     const uint64_t* msg_ptr = (const uint64_t*) &msg;

@@ -16,7 +16,20 @@ typedef enum vud_ime_default_kernel {
  * @param r pointer to the concrete rank
  * @param path path to the subkernel
  */
+__attribute__((deprecated))
 void vud_ime_launch_sk(vud_rank* r, const char* path);
+
+/**
+ * @brief load a subkernel (ELF file not .sk) on a rank of DPUs
+ *
+ * This function requires that a key has been installed on the rank.
+ * It will load the ELF file into memory, convert it into the SK format
+ * and then encrypt and tag it. Only then will it be sent to the rank.
+ *
+ * @param r rank to load subkernel on
+ * @param path path to the ELF file of the subkernel
+ */
+void vud_ime_launch(vud_rank* r, const char* path);
 
 /**
  * @brief launch on of the system subkernels
@@ -41,6 +54,7 @@ void vud_ime_install_key(vud_rank* r, const uint8_t key[32], const uint64_t comm
  * @param paths array of paths to subkernels
  * @param addrs addresses to deploy subkernels to - should not alias each other
  */
+__attribute__((deprecated))
 void vud_ime_launch_sk_ext(vud_rank* r, size_t n, const char** paths, const uint64_t* addrs);
 
 /**

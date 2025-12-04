@@ -18,6 +18,7 @@ typedef enum vud_error {
     VUD_INVALID_RES,
     VUD_EXPECTED_FAULT,
     VUD_SK_NOT_FOUND,
+    VUD_SK_TAG,
     VUD_NOT_WAITING,
     VUD_KEY_XCHG,
 } vud_error;
@@ -70,6 +71,7 @@ static inline const char* vud_error_str(vud_error err) {
         [VUD_INVALID_RES] = "invalid VCI response",
         [VUD_EXPECTED_FAULT] = "DPUs are not all in fault",
         [VUD_SK_NOT_FOUND] = "could not find requested subkernel",
+        [VUD_SK_TAG] = "cannot encrypt and tag subkernel",
         [VUD_NOT_WAITING] = "DPU is not waiting for guest",
         [VUD_KEY_XCHG] = "key exchange failed",
     };
