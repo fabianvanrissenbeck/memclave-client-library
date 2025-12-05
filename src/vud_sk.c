@@ -55,10 +55,18 @@ long vud_sk_from_elf(const char* path, size_t sz, uint64_t* out) {
         n_data += 2048 - (n_data % 2048);
     }
 
-    pclose(sec_text);
-    pclose(sec_data);
+    if (pclose(sec_text) != 0) {
+        sec_text = NULL;
+        goto failure;
+    }
 
     sec_text = NULL;
+
+    if (pclose(sec_data) != 0) {
+        sec_data = NULL;
+        goto failure;
+    }
+
     sec_data = NULL;
 
     uint32_t size_aad = 64;
