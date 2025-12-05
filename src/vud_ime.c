@@ -260,7 +260,7 @@ void vud_ime_wait(vud_rank* r) {
     wait_for_fault(r);
 }
 
-void buf_to_stdout(size_t sz, const uint64_t* buf) {
+static void buf_to_stdout(size_t sz, const uint64_t* buf) {
     FILE* p = popen("xxd -e -g 8", "w");
     assert(p != NULL);
 
