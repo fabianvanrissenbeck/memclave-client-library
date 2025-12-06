@@ -1,6 +1,9 @@
 #ifndef VUD_SK_H
 #define VUD_SK_H
 
+#include "vud.h"
+#include "vud_mem.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -26,5 +29,16 @@ long vud_sk_from_elf(const char* path, size_t sz, uint64_t* out);
  * @return 0 on success or negative value on failure
  */
 int vud_enc_auth_sk(uint64_t* sk, const uint8_t* key);
+
+/**
+ * @brief lookup the location of a symbol in MRAM based on the subkernel ELF
+ * file
+ * @param binary path to a subkernel ELF binary
+ * @param symb symbol to lookup - must be in MRAM
+ * @param out_addr location to write MRAM address to or NULL
+ * @return VUD_OK on success or an appropriate error value on failure
+ */
+vud_error vud_get_symbol(const char *binary, const char *symb,
+                         vud_mram_addr *out_addr);
 
 #endif

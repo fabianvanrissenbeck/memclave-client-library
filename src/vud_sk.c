@@ -142,3 +142,60 @@ failure:
     mbedtls_chachapoly_free(ctx);
     return -1;
 }
+
+vud_error vud_get_symbol(const char *binary,
+                         const char *symb,
+                         vud_mram_addr *out_addr)
+{
+    /* kind of hacky to do it this way - space should ensure an exact symbol match though */
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "/bin/bash -c \"readelf --wide --syms %s | awk '/ %s$/ { print \\$2 }'\"", binary, symb);
+
+    char buf[512];
+
+    FILE* out = popen(cmd, "r");
+
+    if (out == NULL) {
+        return VUD_SYSTEM_ERR;
+    }
+
+    size_t n_read;
+
+    if ((n_read = fread(buf, 1, sizeof(buf), out)) >= sizeof(buf)) {
+        // output larger than 512 should usually not happen for one symbol
+        pclose(out);
+        return VUD_SYSTEM_ERR;
+    }
+
+    if (pclose(out) < 0) {
+        return VUD_SYSTEM_ERR;
+    }
+
+    if (n_read == 0) {
+        return VUD_SYMBOL_NOT_FOUND;
+    }
+
+    char* endptr = NULL;
+    uint64_t res = strtoull(buf, &endptr, 16);
+
+    if (endptr == buf) {
+        return VUD_SYMBOL_NOT_FOUND;
+    }
+
+    if (!(res & 0x08000000)) {
+        return VUD_SYMBOL_NOT_MRAM;
+    }
+
+    res -= 0x08000000;
+
+    if (res >= 64 << 20) {
+        return VUD_SYMBOL_NOT_MRAM;
+    }
+
+    if (out_addr) {
+        *out_addr = res;
+    }
+
+    return VUD_OK;
+}

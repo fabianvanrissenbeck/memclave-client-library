@@ -1,6 +1,7 @@
 #include <vud.h>
-#include <vud_mem.h>
+#include <vud_sk.h>
 #include <vud_ime.h>
+#include <vud_mem.h>
 
 #include <stdio.h>
 #include <assert.h>
@@ -29,6 +30,24 @@ int main(void) {
         goto error;
     }
 
+    vud_mram_addr addr_a, addr_b, addr_c;
+    vud_error err;
+
+    if ((err = vud_get_symbol("../add", "a", &addr_a))) {
+        printf("cannot get symbol 'a': %s\n", vud_error_str(err));
+        goto error;
+    }
+
+    if ((err = vud_get_symbol("../add", "b", &addr_b))) {
+        printf("cannot get symbol 'b': %s\n", vud_error_str(err));
+        goto error;
+    }
+
+    if ((err = vud_get_symbol("../add", "c", &addr_c))) {
+        printf("cannot get symbol 'c': %s\n", vud_error_str(err));
+        goto error;
+    }
+
     uint8_t key[32];
     random_key(key);
 
@@ -49,8 +68,8 @@ int main(void) {
         tgt_c[i] = a[i] + b[i];
     }
 
-    vud_broadcast_transfer(&r, 64, &a, 0x0);
-    vud_broadcast_transfer(&r, 64, &b, sizeof(a));
+    vud_broadcast_transfer(&r, 64, &a, addr_a);
+    vud_broadcast_transfer(&r, 64, &b, addr_b);
 
     if (r.err) {
         puts("cannot transfer inputs");
@@ -76,7 +95,7 @@ int main(void) {
 
     for (int i = 0; i < 64; ++i) { c_ptr[i] = &c[i][0]; }
 
-    vud_simple_gather(&r, 64, sizeof(a) + sizeof(b), &c_ptr);
+    vud_simple_gather(&r, 64, addr_c, &c_ptr);
 
     int errors = 0;
 

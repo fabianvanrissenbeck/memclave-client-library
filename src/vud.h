@@ -20,6 +20,8 @@ typedef enum vud_error {
     VUD_SK_NOT_FOUND,
     VUD_SK_TAG,
     VUD_NOT_WAITING,
+    VUD_SYMBOL_NOT_FOUND,
+    VUD_SYMBOL_NOT_MRAM,
     VUD_KEY_XCHG,
 } vud_error;
 
@@ -73,6 +75,8 @@ static inline const char* vud_error_str(vud_error err) {
         [VUD_SK_NOT_FOUND] = "could not find requested subkernel",
         [VUD_SK_TAG] = "cannot encrypt and tag subkernel",
         [VUD_NOT_WAITING] = "DPU is not waiting for guest",
+        [VUD_SYMBOL_NOT_FOUND] = "symbol could not be found",
+        [VUD_SYMBOL_NOT_MRAM] = "symbol points to a non-MRAM region",
         [VUD_KEY_XCHG] = "key exchange failed",
     };
 
