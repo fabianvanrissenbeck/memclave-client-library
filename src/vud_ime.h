@@ -20,16 +20,29 @@ __attribute__((deprecated))
 void vud_ime_launch_sk(vud_rank* r, const char* path);
 
 /**
+ * @brief set the next subkernel (ELF file not .sk) to load
+ *
+ * This function sets the next subkernel to load in the rank structure.
+ * Functions looking up symbol locations use this information. The
+ * vud_ime_launch function also relies on this information.
+ *
+ * @param r rank to change the next subkernel location off
+ * @param path path to a subkernel
+ */
+void vud_ime_load(vud_rank* r, const char* path);
+
+/**
  * @brief load a subkernel (ELF file not .sk) on a rank of DPUs
  *
  * This function requires that a key has been installed on the rank.
  * It will load the ELF file into memory, convert it into the SK format
  * and then encrypt and tag it. Only then will it be sent to the rank.
  *
+ * The file to load can be set using the vud_ime_load function.
+ *
  * @param r rank to load subkernel on
- * @param path path to the ELF file of the subkernel
  */
-void vud_ime_launch(vud_rank* r, const char* path);
+void vud_ime_launch(vud_rank* r);
 
 /**
  * @brief launch on of the system subkernels

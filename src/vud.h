@@ -30,6 +30,7 @@ typedef struct vud_rank {
     int fd;
     vud_error err;
     uint8_t key[32];
+    const char* next_sk;
 } vud_rank;
 
 /**

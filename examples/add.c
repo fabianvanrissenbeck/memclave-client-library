@@ -30,21 +30,14 @@ int main(void) {
         goto error;
     }
 
-    vud_mram_addr addr_a, addr_b, addr_c;
-    vud_error err;
+    // only sets the location of the subkernel as of now
+    // tihs is important to fetch symbol locations transparently
+    // before launching
 
-    if ((err = vud_get_symbol("../add", "a", &addr_a))) {
-        printf("cannot get symbol 'a': %s\n", vud_error_str(err));
-        goto error;
-    }
+    vud_ime_load(&r, "../add");
 
-    if ((err = vud_get_symbol("../add", "b", &addr_b))) {
-        printf("cannot get symbol 'b': %s\n", vud_error_str(err));
-        goto error;
-    }
-
-    if ((err = vud_get_symbol("../add", "c", &addr_c))) {
-        printf("cannot get symbol 'c': %s\n", vud_error_str(err));
+    if (r.err) {
+        puts("cannot load subkernel");
         goto error;
     }
 
@@ -64,19 +57,19 @@ int main(void) {
 
     for (int i = 0; i < 64; ++i) {
         a[i] = i;
-        b[i] = 2 * i;
+        b[i] = i;
         tgt_c[i] = a[i] + b[i];
     }
 
-    vud_broadcast_transfer(&r, 64, &a, addr_a);
-    vud_broadcast_transfer(&r, 64, &b, addr_b);
+    vud_broadcast_to(&r, 64, &a, "a");
+    vud_broadcast_to(&r, 64, &b, "b");
 
     if (r.err) {
         puts("cannot transfer inputs");
         goto error;
     }
 
-    vud_ime_launch(&r, "../add");
+    vud_ime_launch(&r);
 
     if (r.err) {
         puts("failed to launch subkernel");
@@ -95,7 +88,7 @@ int main(void) {
 
     for (int i = 0; i < 64; ++i) { c_ptr[i] = &c[i][0]; }
 
-    vud_simple_gather(&r, 64, addr_c, &c_ptr);
+    vud_gather_from(&r, 64, "c", &c_ptr);
 
     int errors = 0;
 

@@ -1,5 +1,7 @@
 #include "vud_mem.h"
 
+#include "vud_sk.h"
+
 static vud_mram_addr virt_to_real(vud_mram_addr addr) {
     const vud_mram_addr mask_0_13 = 0x3FFF;
     const vud_mram_addr mask_14 = 0x4000;
@@ -167,4 +169,43 @@ void vud_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_
     }
 
     invoc_memory_fence();
+}
+
+void vud_broadcast_to(vud_rank* r, vud_mram_size sz, const uint64_t (*src)[sz], const char* symbol) {
+    vud_mram_addr addr;
+    vud_error err;
+
+    if (r->err == VUD_OK) {
+        if ((err = vud_get_symbol(r->next_sk, symbol, &addr))) {
+            r->err = err;
+        }
+    }
+
+    vud_broadcast_transfer(r, sz, src, addr);
+}
+
+void vud_transfer_to(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], const char* symbol) {
+    vud_mram_addr addr;
+    vud_error err;
+
+    if (r->err == VUD_OK) {
+        if ((err = vud_get_symbol(r->next_sk, symbol, &addr))) {
+            r->err = err;
+        }
+    }
+
+    vud_simple_transfer(r, sz, src, addr);
+}
+
+void vud_gather_from(vud_rank* r, vud_mram_size sz, const char* symbol, uint64_t* (*tgt)[64]) {
+    vud_mram_addr addr;
+    vud_error err;
+
+    if (r->err == VUD_OK) {
+        if ((err = vud_get_symbol(r->next_sk, symbol, &addr))) {
+            r->err = err;
+        }
+    }
+
+    vud_simple_gather(r, sz, addr, tgt);
 }
