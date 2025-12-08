@@ -111,8 +111,8 @@ static unsigned get_dpu_id(unsigned group_nr, unsigned ci_nr) {
     return ci_nr * 8 + group_nr;
 }
 
-static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_t (*src)[sz], vud_mram_addr tgt) {
-    for (size_t i = 0; i < sz; ++i) {
+static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_t (*src)[sz], vud_mram_addr tgt, unsigned id, unsigned nr_worker) {
+    for (size_t i = id; i < sz; i += nr_worker) {
         uint64_t w = (*src)[i];
         uint64_t mat[8] = { w, w, w, w, w, w, w, w };
 
@@ -132,8 +132,8 @@ static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_
     invoc_memory_fence();
 }
 
-void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt) {
-    for (size_t i = 0; i < sz; ++i) {
+void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt, unsigned id, unsigned nr_worker) {
+    for (size_t i = id; i < sz; i += nr_worker) {
         vud_mram_addr addr = tgt + i * 8;
 
         for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
@@ -152,12 +152,12 @@ void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[
     invoc_memory_fence();
 }
 
-void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64]) {
+void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64], unsigned id, unsigned nr_worker) {
     // flush all relevant cache lines
 
     invoc_memory_fence();
 
-    for (size_t i = 0; i < sz; ++i) {
+    for (size_t i = id; i < sz; i += nr_worker) {
         vud_mram_addr addr = src + i * 8;
 
         for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
@@ -168,7 +168,7 @@ void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64
 
     invoc_memory_fence();
 
-    for (size_t i = 0; i < sz; ++i) {
+    for (size_t i = id; i < sz; i += nr_worker) {
         vud_mram_addr addr = src + i * 8;
 
         for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
@@ -187,7 +187,7 @@ void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64
 
     invoc_memory_fence();
 
-    for (size_t i = 0; i < sz; ++i) {
+    for (size_t i = id; i < sz; i += nr_worker) {
         vud_mram_addr addr = src + i * 8;
 
         for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
@@ -204,15 +204,15 @@ static void pool_op_worker(unsigned id, unsigned nr_worker, void* arg_ptr) {
 
     switch (arg->type) {
     case MEM_OP_BROADCAST:
-        intl_broadcast_transfer(arg->rank, arg->bc.sz, arg->bc.src, arg->bc.tgt);
+        intl_broadcast_transfer(arg->rank, arg->bc.sz, arg->bc.src, arg->bc.tgt, id, nr_worker);
         break;
 
     case MEM_OP_TRANSFER:
-        intl_simple_transfer(arg->rank, arg->tf.sz, arg->tf.src, arg->tf.tgt);
+        intl_simple_transfer(arg->rank, arg->tf.sz, arg->tf.src, arg->tf.tgt, id, nr_worker);
         break;
 
     case MEM_OP_GATHER:
-        intl_simple_gather(arg->rank, arg->gt.sz, arg->gt.src, arg->gt.tgt);
+        intl_simple_gather(arg->rank, arg->gt.sz, arg->gt.src, arg->gt.tgt, id, nr_worker);
         break;
     }
 }

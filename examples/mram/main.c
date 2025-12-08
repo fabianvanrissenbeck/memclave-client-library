@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <inttypes.h>
 
@@ -14,7 +15,7 @@
 #include <vud_ime.h>
 
 #define MIN_WORKER 1
-#define MAX_WORKER 1
+#define MAX_WORKER 16
 
 #define MIN_BLOCKS 64
 #define MAX_BLOCKS (32 << 20)
@@ -80,9 +81,77 @@ static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
 
     uint64_t tm = tm_end - tm_start;
     double rate = ((double)(size * 64) / ((double) tm / (double)(s_clocks_per_sec))) / (double)(1024 * 1024);
+    printf("broadcast,%u,%u,%" PRIu64",%"PRIu64",%.02f\n", size, worker, tm, s_clocks_per_sec, rate);
+
+    uint64_t* buffer = calloc(64, size);
+
+    if (buffer == NULL) {
+        free(rand);
+        return;
+    }
+
+    // touch all memory addresses to prevent measuring page allocation
+    for (size_t i = 0; i < size * 64 / sizeof(uint64_t); ++i) {
+        ((volatile uint64_t*) buffer)[i] = 0;
+    }
+
+    uint64_t* buffer_ptr[64];
+    tm_start = rdtsc();
+
+    for (int i = 0; i < 64; ++i) {
+        buffer_ptr[i] = &buffer[size * i / sizeof(uint64_t)];
+    }
+
+    vud_simple_gather(r, size / sizeof(uint64_t), 0x0, &buffer_ptr);
+    tm_end = rdtsc();
+
+    tm = tm_end - tm_start;
+    rate = ((double)(size * 64) / ((double) tm / (double)(s_clocks_per_sec))) / (double)(1024 * 1024);
+
+    printf("gather,%u,%u,%" PRIu64",%"PRIu64",%.02f\n", size, worker, tm, s_clocks_per_sec, rate);
+
+    for (int i = 0; i < 64; ++i) {
+        if (memcmp(buffer_ptr[i], rand, size) != 0) {
+            printf("sanity check failure: broadcast/gather incorrect for DPU %d\n", i);
+
+            free(rand);
+            free(buffer);
+
+            return;
+        }
+    }
+
+    tm_start = rdtsc();
+    vud_simple_transfer(r, size / sizeof(uint64_t), &buffer_ptr, 0x0);
+    tm_end = rdtsc();
+
+    tm = tm_end - tm_start;
+    rate = ((double)(size * 64) / ((double) tm / (double)(s_clocks_per_sec))) / (double)(1024 * 1024);
+
+    printf("transfer,%u,%u,%" PRIu64",%"PRIu64",%.02f\n", size, worker, tm, s_clocks_per_sec, rate);
+
+    tm_start = rdtsc();
+    vud_simple_gather(r, size / sizeof(uint64_t), 0x0, &buffer_ptr);
+    tm_end = rdtsc();
+
+    tm = tm_end - tm_start;
+    rate = ((double)(size * 64) / ((double) tm / (double)(s_clocks_per_sec))) / (double)(1024 * 1024);
+
+    printf("gather,%u,%u,%" PRIu64",%"PRIu64",%.02f\n", size, worker, tm, s_clocks_per_sec, rate);
+
+    for (int i = 0; i < 64; ++i) {
+        if (memcmp(buffer_ptr[i], rand, size) != 0) {
+            printf("sanity check failure: transfer/gather incorrect for DPU %d\n", i);
+
+            free(rand);
+            free(buffer);
+
+            return;
+        }
+    }
 
     free(rand);
-    printf("%u,%u,%" PRIu64",%"PRIu64",%.02f\n", size, worker + 1, tm, s_clocks_per_sec, rate);
+    free(buffer);
 }
 
 int main(void) {
@@ -93,7 +162,7 @@ int main(void) {
         return 1;
     }
 
-    printf("size,threads,time (rdtsc),clocks per sec,transfer rate (MB/s)\n");
+    printf("type,size,threads,time (rdtsc),clocks per sec,transfer rate (MB/s)\n");
 
     uint64_t rdtsc_sec_start = rdtsc();
     sleep(1);

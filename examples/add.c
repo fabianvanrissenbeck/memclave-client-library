@@ -30,6 +30,13 @@ int main(void) {
         goto error;
     }
 
+    vud_rank_nr_workers(&r, 8);
+
+    if (r.err) {
+        printf("cannot increase worker count: %s\n", vud_error_str(r.err));
+        goto error;
+    }
+
     // only sets the location of the subkernel as of now
     // tihs is important to fetch symbol locations transparently
     // before launching
