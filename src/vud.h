@@ -3,6 +3,8 @@
 #ifndef ROUTER_VUD_H
 #define ROUTER_VUD_H
 
+#include "vud_pool.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -32,6 +34,7 @@ typedef struct vud_rank {
     vud_error err;
     uint8_t key[32];
     const char* next_sk;
+    vud_pool* pool;
 } vud_rank;
 
 /**
@@ -47,14 +50,14 @@ vud_rank vud_rank_alloc(int rank_nr);
 void vud_rank_free(vud_rank* rank);
 
 /**
- * @brief specify the number of additional worker threads
+ * @brief specify the number of worker threads
  *
  * Worker threads are used in all memory transfer functions
  * due to their quite heavy-weight nature. All other operations use
  * just one thread (the calling one).
  *
  * @param rank rank using the additional worker threads
- * @param n number of additional workers - 0 to only use the calling thread
+ * @param n number of workers - 1 to only use the calling thread
  */
 void vud_rank_nr_workers(vud_rank* rank, unsigned n);
 

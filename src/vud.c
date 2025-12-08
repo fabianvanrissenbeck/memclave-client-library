@@ -117,10 +117,20 @@ vud_rank vud_rank_alloc(int rank_nr) {
         return new_error(VUD_MEMORY_ERR);
     }
 
+    vud_pool* pool = vud_pool_init(1);
+
+    if (pool == NULL) {
+        munmap((void*) ptr, RANK_MAP_SIZE);
+        close(fd);
+
+        return new_error(VUD_SYSTEM_THREAD);
+    }
+
     return (vud_rank) {
         .base = ptr,
         .fd = fd,
-        .err = VUD_OK
+        .err = VUD_OK,
+        .pool = pool,
     };
 }
 
@@ -133,12 +143,19 @@ void vud_rank_free(vud_rank* rank) {
         close(rank->fd);
     }
 
+    if (rank->pool) {
+        vud_pool_free(rank->pool);
+    }
+
     rank->base = MAP_FAILED;
     rank->fd = -1;
 }
 
 void vud_rank_nr_workers(vud_rank* rank, unsigned n) {
-    if (n > 0) {
+    vud_pool_free(rank->pool);
+    rank->pool = vud_pool_init(n);
+
+    if (rank->pool == NULL) {
         rank->err = VUD_SYSTEM_THREAD;
     }
 }

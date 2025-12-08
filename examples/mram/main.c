@@ -13,8 +13,8 @@
 #include <vud.h>
 #include <vud_ime.h>
 
-#define MIN_WORKER 0
-#define MAX_WORKER 0
+#define MIN_WORKER 1
+#define MAX_WORKER 1
 
 #define MIN_BLOCKS 64
 #define MAX_BLOCKS (32 << 20)

@@ -2,6 +2,34 @@
 
 #include "vud_sk.h"
 
+typedef enum mem_op_type {
+    MEM_OP_BROADCAST = 1,
+    MEM_OP_TRANSFER,
+    MEM_OP_GATHER
+} mem_op_type;
+
+typedef struct mem_op {
+    vud_rank* rank;
+    mem_op_type type;
+    union {
+        struct {
+            vud_mram_size sz;
+            const uint64_t (*src)[];
+            vud_mram_addr tgt;
+        } bc;
+        struct {
+            vud_mram_size sz;
+            const uint64_t* (*src)[64];
+            vud_mram_addr tgt;
+        } tf;
+        struct {
+            vud_mram_size sz;
+            vud_mram_addr src;
+            uint64_t* (*tgt)[64];
+        } gt;
+    };
+} mem_op;
+
 static vud_mram_addr virt_to_real(vud_mram_addr addr) {
     const vud_mram_addr mask_0_13 = 0x3FFF;
     const vud_mram_addr mask_14 = 0x4000;
@@ -83,7 +111,7 @@ static unsigned get_dpu_id(unsigned group_nr, unsigned ci_nr) {
     return ci_nr * 8 + group_nr;
 }
 
-void vud_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_t (*src)[sz], vud_mram_addr tgt) {
+static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_t (*src)[sz], vud_mram_addr tgt) {
     for (size_t i = 0; i < sz; ++i) {
         uint64_t w = (*src)[i];
         uint64_t mat[8] = { w, w, w, w, w, w, w, w };
@@ -104,7 +132,7 @@ void vud_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_t (*src)
     invoc_memory_fence();
 }
 
-void vud_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt) {
+void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt) {
     for (size_t i = 0; i < sz; ++i) {
         vud_mram_addr addr = tgt + i * 8;
 
@@ -124,7 +152,7 @@ void vud_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[6
     invoc_memory_fence();
 }
 
-void vud_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64]) {
+void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64]) {
     // flush all relevant cache lines
 
     invoc_memory_fence();
@@ -169,6 +197,62 @@ void vud_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_
     }
 
     invoc_memory_fence();
+}
+
+static void pool_op_worker(unsigned id, unsigned nr_worker, void* arg_ptr) {
+    mem_op* arg = arg_ptr;
+
+    switch (arg->type) {
+    case MEM_OP_BROADCAST:
+        intl_broadcast_transfer(arg->rank, arg->bc.sz, arg->bc.src, arg->bc.tgt);
+        break;
+
+    case MEM_OP_TRANSFER:
+        intl_simple_transfer(arg->rank, arg->tf.sz, arg->tf.src, arg->tf.tgt);
+        break;
+
+    case MEM_OP_GATHER:
+        intl_simple_gather(arg->rank, arg->gt.sz, arg->gt.src, arg->gt.tgt);
+        break;
+    }
+}
+
+static void pool_do_op(vud_rank* r, mem_op op) {
+    op.rank = r;
+    vud_pool_do(r->pool, pool_op_worker, &op);
+}
+
+void vud_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_t (*src)[sz], vud_mram_addr tgt) {
+    pool_do_op(r, (mem_op) {
+        .type = MEM_OP_BROADCAST,
+        .bc = {
+            .sz = sz,
+            .src = src,
+            .tgt = tgt
+        }
+    });
+}
+
+void vud_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt) {
+    pool_do_op(r, (mem_op) {
+        .type = MEM_OP_TRANSFER,
+        .tf = {
+            .sz = sz,
+            .src = src,
+            .tgt = tgt
+        }
+    });
+}
+
+void vud_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64]) {
+    pool_do_op(r, (mem_op) {
+        .type = MEM_OP_GATHER,
+        .gt = {
+            .sz = sz,
+            .src = src,
+            .tgt = tgt
+        }
+    });
 }
 
 void vud_broadcast_to(vud_rank* r, vud_mram_size sz, const uint64_t (*src)[sz], const char* symbol) {
