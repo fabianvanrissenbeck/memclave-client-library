@@ -5,9 +5,10 @@
 #include <getopt.h>    // for getopt_long(), if you ever need it
 #include <stdbool.h>
 
-#include "../../src/vud.h"
-#include "../../src/vud_mem.h"
-#include "../../src/vud_ime.h"
+#include <vud.h>
+#include <vud_sk.h>
+#include <vud_ime.h>
+#include <vud_mem.h>
 #include "../../src/vud_log.h"
 #include "support/common.h"    // defines T, dpu_arguments_t, dpu_results_t, etc.
 #include "support/params.h"    // parses command-line into struct Params
@@ -20,10 +21,23 @@
 #define A_OFFSET       (ARG_OFFSET + ((ARG_SIZE + 0xFF) & ~0xFF))  // e.g. 0x1100
 #define NR_DPUS 64
 
+#define MRAM_SIZE_BYTES     (64u << 20)
+#define SK_LOG_SIZE_BYTES   64
+#define SK_LOG_OFFSET       (MRAM_SIZE_BYTES - SK_LOG_SIZE_BYTES)
+
 static T* A;
 static T* B;
 static T* C;
 static T* C_dpu;
+
+static void random_key(uint8_t key[32]) {
+    FILE* fp = fopen("/dev/urandom", "rb");
+
+    assert(fp != NULL);
+    assert(fread(key, 1, 32, fp) == 32);
+
+    fclose(fp);
+}
 
 // Create input arrays
 static void init_data(T* A, T* B, unsigned int m_size, unsigned int n_size) {
@@ -89,16 +103,34 @@ int main(int argc, char** argv) {
     struct Params p = input_params(argc, argv);
     if (optind + 2 > argc) {
         printf("Usage: dpurun <core loader> <mram image> [options...]\n");
-        return EXIT_FAILURE;
+        //return EXIT_FAILURE;
     }
     printf("\n %s - %s - %s - %s - %s\n", argv[0], argv[1], argv[2], argv[3], argv[4]);
     printf("HOST sizeof(T) = %zu-bytes\n", sizeof(T));
-    vud_rank r = vud_rank_alloc(0);
+    vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
     if (r.err) { 
 	    printf(stderr,"rank_alloc failed\n"); return EXIT_FAILURE; 
     }
     vud_ime_wait(&r);
-    nr_of_dpus = 16;//NR_DPUS;
+
+    vud_ime_load(&r, "../gemv");
+
+    if (r.err) {
+        puts("cannot load subkernel");
+        return EXIT_FAILURE;
+    }
+
+    uint8_t key[32];
+    random_key(key);
+
+    //vud_ime_install_key(&r, key, NULL, NULL);
+
+    if (r.err) {
+        puts("key exchange failed");
+        return EXIT_FAILURE;
+    }
+
+    nr_of_dpus = NR_DPUS;
 #if ENERGY
 	struct dpu_probe_t probe;
 	DPU_ASSERT(dpu_probe_init("energy_probe", &probe));
@@ -204,9 +236,6 @@ int main(int argc, char** argv) {
                                     (const void*)&ptrs,
                                     ARG_OFFSET);
             }
-		//DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_TO_DPU, "DPU_INPUT_ARGUMENTS", 0, sizeof(dpu_arguments_t), DPU_XFER_DEFAULT));
-//	    printf("A[0]=%llu, A[1]=%llu, A[2]=%llu, A[3]=%llu\n",
-//               A[0], A[1], A[2], A[3]);
         // 2) Scatter the matrix‐slice for each DPU
         {
             // one 8‐byte word per entry
@@ -225,10 +254,6 @@ int main(int argc, char** argv) {
                                 &ptrs,
                                 A_offset);
         }
-//printf("B:%llu\n",*(B));
-//printf("B[1]:%llu\n",B[1]);
-//printf("B[2]:%llu\n",B[2]);
-//printf("B[3]:%llu\n",B[3]);
 
         // 3) Broadcast the vector B to every DPU
         {
@@ -259,7 +284,7 @@ int main(int argc, char** argv) {
 #endif
 		}
 
-                vud_ime_launch_sk(&r, "../gemv.sk");
+                vud_ime_launch(&r);
     		if (r.err) { 
 	    		printf("Launch failed %d\n", r.err);
 			return EXIT_FAILURE; 
@@ -342,7 +367,6 @@ int main(int argc, char** argv) {
 //#endif
 			break;
 			}
-			//printf("%d: %x -- %x\n", i, C[i], C_dpu[n * max_rows_per_dpu + j]);
 			i++;
 		}
 	}
@@ -352,35 +376,18 @@ int main(int argc, char** argv) {
 		printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
 	}
 #if 0
-    uint64_t debug[64][128];
-    uint64_t* ptrs[64];
-    for(int i=0;i<64;i++) ptrs[i] = ptrs[i] = &debug[i][0];
-    vud_simple_gather(&r, /*words=*/14, /*mr_offset=*/(64<<20)-128, &ptrs);
-printf(
-  "DPU0  args=(n=%llu,p=%llu,rows=%llu,max=%llu)\n"
-  "      A[0..3]=(%llu,%llu,%llu,%llu)\n"
-  "      B[0..3]=(%llu,%llu,%llu,%llu)\n"
-  "      C_partial[0]=%llu\n"
-  "      C_sum_partial[0]=%llu\n",
-  debug[0][0], debug[0][1], debug[0][2], debug[0][3],
-  debug[0][4], debug[0][5], debug[0][6], debug[0][7],
-  debug[0][8], debug[0][9], debug[0][10], debug[0][11],
-  debug[0][12], debug[0][13]);
-#endif
-#if 0
-    uint64_t logs[64][SK_LOG_MAX_ENTRIES];
-    int err = vud_log_read(&r, 64, logs);
-    if (err) {
-        printf("Log gather failed: %d\n", r.err);
-    } else {
-        for (int d = 0; d < 64; ++d) {
-            printf("DPU %02d logs:", d);
-            for (int i = 0; i < 2; ++i) {
-                printf(" %llu", (unsigned long long)logs[d][i]);
-            }
-            printf("\n");
-        }
+    #define LANES 64
+    #define WORDS_PER_DPU 8  // we read 1 x 8B per DPU
+    
+    uint64_t logs[LANES * WORDS_PER_DPU];
+    uint64_t* ptrs[LANES];
+    for (int d = 0; d < nr_of_dpus; ++d) {
+        ptrs[d] = &logs[d*WORDS_PER_DPU];
     }
+    vud_simple_gather(&r, WORDS_PER_DPU, SK_LOG_OFFSET, &ptrs);
+        for (int d = 0; d < 64; ++d) {
+                printf(" cache_C[0] %d\n", logs[d*WORDS_PER_DPU + 0], logs[d*WORDS_PER_DPU + 1]);
+	}
 #endif
 
 	// Deallocation

@@ -9,10 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <inttypes.h>
 
-#include "../../src/vud.h"
-#include "../../src/vud_mem.h"
-#include "../../src/vud_ime.h"
+#include <vud.h>
+#include <vud_sk.h>
+#include <vud_ime.h>
+#include <vud_mem.h>
 #include "../../src/vud_log.h"
 #include "mram-management.h"
 #include "support/common.h"
@@ -32,13 +35,42 @@
 #include <dpu_probe.h>
 #endif
 
-#define DPU_BINARY "../bfs.sk"
+/// total MRAM per DPU
+#define MRAM_SIZE_BYTES     (64u << 20)
+/// we reserve 64 B at the very top
+#define SK_LOG_SIZE_BYTES   64
+#define SK_LOG_OFFSET       (MRAM_SIZE_BYTES - SK_LOG_SIZE_BYTES)
+
+// ---- tiny time helper ----
+static inline double now_ms(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+// ---- gather 64B SK log (8 x u64) from all lanes ----
+static void gather_sklog(vud_rank* r, uint64_t out_logs[64][8]) {
+    uint64_t* ptrs[64];
+    for (int d = 0; d < 64; ++d) ptrs[d] = &out_logs[d][0];
+    vud_simple_gather(r, /*words=*/8, /*src=*/SK_LOG_OFFSET, &ptrs);
+}
+
+// ---- max over DPUs for a given slot ----
+static inline uint64_t max_slot(uint64_t logs[64][8], int slot) {
+    uint64_t mx = 0; for (int d = 0; d < 64; ++d) if (logs[d][slot] > mx) mx = logs[d][slot];
+    return mx;
+}
+typedef struct { double f_hz; double baseline_ms; } dpu_calib_t;
+
+
+#define DPU_BINARY "../bfs"
 
 // Main of the Host Application
 int main(int argc, char** argv) {
 
     // Process parameters
     struct Params p = input_params(argc, argv);
+    dpu_calib_t calib = { .f_hz = 360025499, .baseline_ms = 5.2 };
+    PRINT_INFO(p.verbosity >=1, "[calib] DPU counter: %.1f MHz, baseline launch+wait: %.3f ms\n",
+       calib.f_hz / 1e6, calib.baseline_ms);
 
     // Timer and profiling
     Timer timer;
@@ -52,13 +84,28 @@ int main(int argc, char** argv) {
     // Allocate DPUs and load binary
     uint32_t numDPUs = NR_DPUS;
     // Allocate and initialize vud rank
-    vud_rank r = vud_rank_alloc(1);
+    vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
     if (r.err) {
         fprintf(stderr, "vud_rank_alloc failed\n");
         return EXIT_FAILURE;
     }
     vud_ime_wait(&r);
     PRINT_INFO(p.verbosity >= 1, "Allocated %d DPU(s)", numDPUs);
+    vud_ime_load(&r, DPU_BINARY);
+        if (r.err) {
+            puts("cannot load subkernel");
+	    return -1;
+        }
+ 
+        uint8_t key[32];
+        //random_key(key);
+ 
+        //vud_ime_install_key(&r, key, NULL, NULL);
+ 
+        if (r.err) {
+            puts("key exchange failed");
+	    return -1;
+        }
 
     // Initialize BFS data structures
     PRINT_INFO(p.verbosity >= 1, "Reading graph %s", p.fileName);
@@ -73,10 +120,14 @@ int main(int argc, char** argv) {
     uint64_t* currentFrontier = calloc(numNodes/64, sizeof(uint64_t)); // Bit vector with one bit per node
     uint64_t* nextFrontier = calloc(numNodes/64, sizeof(uint64_t)); // Bit vector with one bit per node
     setBit(nextFrontier[0], 0); // Initialize frontier to first node
+    //uint32_t src = 674502;                    // pick your source here
+    //memset(nextFrontier, 0, (numNodes/64) * sizeof(uint64_t));
+    //setBit(nextFrontier[src / 64], src % 64);
     uint32_t level = 1;
     void *rowptr_bufs[NR_DPUS] = {0};
     void *nbr_bufs[NR_DPUS] = {0};
     void *level_bufs[NR_DPUS] = {0};
+    PRINT_INFO(p.verbosity >= 1, "CSR sanity: deg(0)=%u  nodes=%u edges=%u", nodePtrs[1] - nodePtrs[0], csrGraph.numNodes, csrGraph.numEdges);
 
     // Partition data structure across DPUs
     uint32_t numNodesPerDPU = ROUND_UP_TO_MULTIPLE_OF_64((numNodes - 1)/numDPUs + 1);
@@ -84,27 +135,27 @@ int main(int argc, char** argv) {
     struct DPUParams dpuParams[numDPUs];
     unsigned int dpuIdx = 0;
     // ---- Uniform MRAM layout plan (no functional change yet) ----
-uint32_t ROWPTR_BYTES   = ROUND_UP_TO_MULTIPLE_OF_8((numNodesPerDPU + 1) * sizeof(uint32_t));
+    uint32_t ROWPTR_BYTES   = ROUND_UP_TO_MULTIPLE_OF_8((numNodesPerDPU + 1) * sizeof(uint32_t));
 
-// Find max neighbors among all DPUs' partitions
-uint32_t maxNbrs = 0;
-for (unsigned d = 0; d < numDPUs; ++d) {
-    uint32_t start = d * numNodesPerDPU;
-    if (start >= numNodes) break;
-    uint32_t end   = start + numNodesPerDPU;
-    if (end > numNodes) end = numNodes;
-    uint32_t off   = nodePtrs[start];
-    uint32_t nbrs  = nodePtrs[end] - off;   // edges in this partition
-    if (nbrs > maxNbrs) maxNbrs = nbrs;
-}
-uint32_t COLIDX_BYTES   = ROUND_UP_TO_MULTIPLE_OF_8(maxNbrs * sizeof(uint32_t));
-uint32_t NODELEVEL_BYTES= ROUND_UP_TO_MULTIPLE_OF_8(numNodesPerDPU * sizeof(uint32_t));
-uint32_t GLOBAL_BM_BYTES= ROUND_UP_TO_MULTIPLE_OF_8((numNodes/64)     * sizeof(uint64_t));
-uint32_t CUR_BM_BYTES   = ROUND_UP_TO_MULTIPLE_OF_8((numNodesPerDPU/64) * sizeof(uint64_t));
+    // Find max neighbors among all DPUs' partitions
+    uint32_t maxNbrs = 0;
+    for (unsigned d = 0; d < numDPUs; ++d) {
+        uint32_t start = d * numNodesPerDPU;
+        if (start >= numNodes) break;
+        uint32_t end   = start + numNodesPerDPU;
+        if (end > numNodes) end = numNodes;
+        uint32_t off   = nodePtrs[start];
+        uint32_t nbrs  = nodePtrs[end] - off;   // edges in this partition
+        if (nbrs > maxNbrs) maxNbrs = nbrs;
+    }
+    uint32_t COLIDX_BYTES   = ROUND_UP_TO_MULTIPLE_OF_8(maxNbrs * sizeof(uint32_t));
+    uint32_t NODELEVEL_BYTES= ROUND_UP_TO_MULTIPLE_OF_8(numNodesPerDPU * sizeof(uint32_t));
+    uint32_t GLOBAL_BM_BYTES= ROUND_UP_TO_MULTIPLE_OF_8((numNodes/64)     * sizeof(uint64_t));
+    uint32_t CUR_BM_BYTES   = ROUND_UP_TO_MULTIPLE_OF_8((numNodesPerDPU/64) * sizeof(uint64_t));
 
-// Print once for verification
-PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodelevel=%u, visited=%u, cur_frontier=%u, next_frontier=%u",
-           ROWPTR_BYTES, COLIDX_BYTES, NODELEVEL_BYTES, GLOBAL_BM_BYTES, CUR_BM_BYTES, GLOBAL_BM_BYTES);
+    // Print once for verification
+    PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodelevel=%u, visited=%u, cur_frontier=%u, next_frontier=%u",
+               ROWPTR_BYTES, COLIDX_BYTES, NODELEVEL_BYTES, GLOBAL_BM_BYTES, CUR_BM_BYTES, GLOBAL_BM_BYTES);
     struct mram_heap_allocator_t allocator;
     init_allocator(&allocator);
     for(dpuIdx = 0; dpuIdx < numDPUs; ++dpuIdx) {
@@ -317,8 +368,8 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
 
     while (!nextFrontierEmpty) {
         PRINT_INFO(p.verbosity >= 1,
-                   "Processing current frontier for level %u",
-                   level);
+                   "Processing current frontier for level %u (distance %u)",
+                   level, level - 1);
 
     #if ENERGY
         DPU_ASSERT(dpu_probe_start(&probe));
@@ -326,21 +377,36 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
         // Run all DPUs
         PRINT_INFO(p.verbosity >= 1, "    Booting DPUs");
         startTimer(&timer);
-        vud_ime_launch_sk(&r, DPU_BINARY);
+        vud_ime_launch(&r);
         if (r.err) {
             fprintf(stderr, "vud_ime_launch_sk failed %d\n", r.err);
             return EXIT_FAILURE;
         }
+	double l0 = now_ms();
         vud_ime_wait(&r);
         if (r.err) {
             fprintf(stderr, "vud_ime_launch_sk failed %d\n", r.err);
             return EXIT_FAILURE;
         }
+	double l1 = now_ms();
         stopTimer(&timer);
-        dpuTime += getElapsedTime(timer);
-        PRINT_INFO(p.verbosity >= 2,
-                   "    Level DPU Time: %f ms",
-                   getElapsedTime(timer)*1e3);
+	{
+		uint64_t logs[64][8];
+                gather_sklog(&r, logs);
+		// slot[1] = compute cycles (max over tasklets), written by DPU
+		uint64_t compute_cycles = max_slot(logs, 1);
+		double kernel_ms = (compute_cycles * 1000.0) / calib.f_hz;
+
+		printf("DPU kernel (cycles→ms): %.3f ms  [cycles=%" PRIu64 ", f=%.1f MHz, host %.3f ms]\n", kernel_ms, compute_cycles, calib.f_hz/1e6, (l1 - l0));
+		dpuTime += kernel_ms;
+                PRINT_INFO(p.verbosity >= 2,
+                           "    Level DPU Time: %f ms",
+                           kernel_ms);
+	}
+        //dpuTime += getElapsedTime(timer);
+        //PRINT_INFO(p.verbosity >= 2,
+        //           "    Level DPU Time: %f ms",
+        //           getElapsedTime(timer)*1e3);
     #if ENERGY
         DPU_ASSERT(dpu_probe_stop(&probe));
         double energy;
@@ -363,11 +429,22 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
             exit(1);
         }
 
+#if 0
         // 2) one gather of the entire frontier MRAM region from all DPUs
         copyFromDPU(&r,
             dpuParams[0].dpuNextFrontier_m,  // same MRAM offset in every DPU
             (uint8_t*)allFrontiers,
             frontierBytes);
+#endif
+        // 2) gather the entire frontier MRAM region from all DPUs
+        void *frontier_ptrs[NR_DPUS];
+        for (unsigned d = 0; d < numDPUs; ++d)
+            frontier_ptrs[d] = (uint8_t*)allFrontiers + (size_t)d * frontierBytes;
+
+        gatherFromDPU(&r,
+                      dpuParams[0].dpuNextFrontier_m,           // common MRAM offset
+                      (void*(*)[NR_DPUS])&frontier_ptrs,        // one host slice per DPU
+                      frontierBytes);                           // bytes per-DPU
 
 	// 3) merge each slice into currentFrontier
 	for(unsigned d = 0; d < numDPUs; ++d) {
@@ -427,7 +504,7 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
                    getElapsedTime(timer)*1e3);
     }
 
-    PRINT_INFO(p.verbosity >= 1, "DPU Kernel Time: %f ms", dpuTime*1e3);
+    PRINT_INFO(p.verbosity >= 1, "DPU Kernel Time: %f ms", dpuTime);
     PRINT_INFO(p.verbosity >= 1, "Inter-DPU Time: %f ms", hostTime*1e3);
     #if ENERGY
     PRINT_INFO(p.verbosity >= 1, "    DPU Energy: %f J", tenergy);
@@ -456,7 +533,7 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
     stopTimer(&timer);
     retrieveTime += getElapsedTime(timer);
     PRINT_INFO(p.verbosity >= 1, "    DPU-CPU Time: %f ms", retrieveTime*1e3);
-    if(p.verbosity == 0) PRINT("CPU-DPU Time(ms): %f    DPU Kernel Time (ms): %f    Inter-DPU Time (ms): %f    DPU-CPU Time (ms): %f", loadTime*1e3, dpuTime*1e3, hostTime*1e3, retrieveTime*1e3);
+    if(p.verbosity == 0) PRINT("CPU-DPU Time(ms): %f    DPU Kernel Time (ms): %f    Inter-DPU Time (ms): %f    DPU-CPU Time (ms): %f", loadTime*1e3, dpuTime, hostTime*1e3, retrieveTime*1e3);
 
     // Calculating result on CPU
     PRINT_INFO(p.verbosity >= 1, "Calculating result on CPU");
@@ -504,16 +581,20 @@ PRINT_INFO(p.verbosity >= 1, "Uniform sizes (bytes): rowptr=%u, colidx=%u, nodel
         }
         ++level;
     }
+    unsigned maxL = 0;
+    for (uint32_t i = 0; i < numNodes; ++i)
+        if (nodeLevelReference[i] > maxL) maxL = nodeLevelReference[i];
+        printf("CPU reference max level = %u\n", maxL);  // expect 10
 
     // Verify the result
     PRINT_INFO(p.verbosity >= 1, "Verifying the result");
-    //int count = 0;
+    int count = 0;
     for(uint32_t nodeIdx = 0; nodeIdx < numNodes; ++nodeIdx) {
         if(nodeLevel[nodeIdx] != nodeLevelReference[nodeIdx]) {
             PRINT_ERROR("Mismatch at node %u (CPU result = level %u, DPU result = level %u)", nodeIdx, nodeLevelReference[nodeIdx], nodeLevel[nodeIdx]);
-	    //count++;
+	    count++;
         }
-	//if (count > 10) break;
+	if (count > 10) break;
     }
 
     // Deallocate data structures

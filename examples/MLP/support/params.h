@@ -8,6 +8,7 @@ typedef struct Params {
     unsigned int  n_size;
     unsigned int  n_warmup;
     unsigned int  n_reps;
+    unsigned int  batch_size;
 }Params;
 
 static void usage() {
@@ -33,6 +34,7 @@ struct Params input_params(int argc, char **argv) {
     p.n_size        = 2048;
     p.n_warmup      = 0;
     p.n_reps        = 1;
+    p.batch_size    = 1;
 
 #if 0
     int opt;

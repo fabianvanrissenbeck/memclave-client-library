@@ -17,6 +17,7 @@ struct dpu_info_t {
 };
 struct dpu_info_t *dpu_info;
 
+#define BL 10
 // Transfer size between MRAM and WRAM
 #ifdef BL
 #define BLOCK_SIZE_LOG2 BL
@@ -28,7 +29,7 @@ struct dpu_info_t *dpu_info;
 #endif
 
 // Data type
-#define T uint64_t
+#define T uint32_t
 
 #ifndef ENERGY
 #define ENERGY 0
