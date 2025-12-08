@@ -4,7 +4,7 @@ project(ime-client-lib C)
 set(CMAKE_C_STANDARD 17)
 add_subdirectory(common)
 
-add_library(ime-client-lib src/vud.c src/vud.h src/vud_mem.c src/vud_mem.h src/vud_ime.c src/vud_ime.h src/vud_sk.c src/vud_sk.h)
+add_library(ime-client-lib src/vud.c src/vud.h src/vud_mem.c src/vud_mem.h src/vud_ime.c src/vud_ime.h src/vud_sk.c src/vud_sk.h src/vud_pool.c src/vud_pool.h)
 target_include_directories(ime-client-lib PUBLIC src)
 target_include_directories(ime-client-lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples/xchg/mbedtls/include)
 target_link_libraries(ime-client-lib PUBLIC common)
