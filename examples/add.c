@@ -53,6 +53,7 @@ int main(void) {
 
     uint64_t a[64];
     uint64_t b[64];
+    uint64_t zero[64] = { 0 };
     uint64_t tgt_c[64];
 
     for (int i = 0; i < 64; ++i) {
@@ -63,6 +64,7 @@ int main(void) {
 
     vud_broadcast_to(&r, 64, &a, "a");
     vud_broadcast_to(&r, 64, &b, "b");
+    vud_broadcast_to(&r, 64, &zero, "c");
 
     if (r.err) {
         puts("cannot transfer inputs");

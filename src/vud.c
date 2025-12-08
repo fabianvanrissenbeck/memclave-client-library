@@ -137,6 +137,12 @@ void vud_rank_free(vud_rank* rank) {
     rank->fd = -1;
 }
 
+void vud_rank_nr_workers(vud_rank* rank, unsigned n) {
+    if (n > 0) {
+        rank->err = VUD_SYSTEM_THREAD;
+    }
+}
+
 uint8_t vud_rank_qry_mux(vud_rank* rank) {
     if (rank->err) { return 0x0; }
 
