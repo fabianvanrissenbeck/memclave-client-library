@@ -9,6 +9,7 @@ target_include_directories(ime-client-lib PUBLIC src)
 target_include_directories(ime-client-lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples/xchg/mbedtls/include)
 target_link_libraries(ime-client-lib PUBLIC common)
 target_link_libraries(ime-client-lib PUBLIC mbedcrypto)
+target_compile_options(ime-client-lib PRIVATE "-O3")
 
 add_executable(ime-add-example examples/add.c)
 target_link_libraries(ime-add-example PUBLIC ime-client-lib)

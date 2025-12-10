@@ -1,5 +1,4 @@
 #include "vud_mem.h"
-
 #include "vud_sk.h"
 
 typedef enum mem_op_type {
@@ -133,16 +132,16 @@ static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_
 }
 
 void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt, unsigned id, unsigned nr_worker) {
-    for (size_t i = id; i < sz; i += nr_worker) {
-        vud_mram_addr addr = tgt + i * 8;
-
-        for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
-            volatile uint64_t* line = line_for_group(r, addr, group_nr);
+    for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
+        for (size_t i = 0; i < sz; ++i) {
             uint64_t mat[8];
 
             for (size_t j = 0; j < 8; ++j) {
                 mat[j] = (*src)[j * 8 + group_nr][i];
             }
+
+            vud_mram_addr addr = tgt + i * 8;
+            volatile uint64_t* line = line_for_group(r, addr, group_nr);
 
             byte_interleave_mat(&mat);
             mat_to_mem(&mat, line);

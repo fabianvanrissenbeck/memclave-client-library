@@ -20,7 +20,7 @@
 #define MIN_BLOCKS 64
 #define MAX_BLOCKS (32 << 20)
 
-#define N_ITER 1
+#define N_ITER 5
 
 static uint64_t s_clocks_per_sec;
 
@@ -73,7 +73,10 @@ static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
 
     vud_rank_nr_workers(r, worker);
 
-    if (r->err) { return; }
+    if (r->err) {
+        free(rand);
+        return;
+    }
 
     uint64_t tm_start = rdtsc();
     vud_broadcast_transfer(r, size / sizeof(uint64_t), (const uint64_t (*)[]) rand, 0x0);
@@ -156,6 +159,7 @@ static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
 
 int main(void) {
     vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
+    vud_ime_wait(&r); // necessary - otherwise the CI-switch state may be incorrect
 
     if (r.err) {
         printf("cannot allocate rank: %s\n", vud_error_str(r.err));
