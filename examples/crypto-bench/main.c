@@ -7,6 +7,7 @@
 
 #define MIN_BLOCK_SIZE 6
 #define MAX_BLOCK_SIZE 24
+#define SUBKERNEL "../chacha-bench"
 
 static void random_key(uint8_t key[32]) {
     FILE* fp = fopen("/dev/urandom", "rb");
@@ -34,11 +35,9 @@ int main(int argc, char** argv) {
     vud_rank rank = vud_rank_alloc(VUD_ALLOC_ANY);
 
     vud_ime_wait(&rank);
-    vud_ime_load(&rank, "../crypto-bench");
-#if 0
+    vud_ime_load(&rank, SUBKERNEL);
     random_key(key);
     vud_ime_install_key(&rank, key, NULL, NULL);
-#endif
     vud_ime_launch(&rank);
     vud_ime_wait(&rank);
 
