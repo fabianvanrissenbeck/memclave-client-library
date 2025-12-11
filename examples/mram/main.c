@@ -35,7 +35,7 @@
 #define MIN_BLOCKS 64
 #define MAX_BLOCKS (32 << 20)
 
-#define N_ITER 5
+#define N_ITER 10
 
 static uint64_t s_clocks_per_sec;
 
