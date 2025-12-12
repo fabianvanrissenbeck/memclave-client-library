@@ -87,14 +87,22 @@ static void perform_benchmark_on(struct dpu_rank_t* r, unsigned worker, unsigned
 #else
 static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
 #endif
-    uint64_t* rand = get_random_data(size);
-    if (rand == NULL) { return; }
+    uint64_t* rand_1 = get_random_data(size);
+    uint64_t* rand_2 = get_random_data(size);
+
+    if (rand_1 == NULL || rand_2 == NULL) {
+        free(rand_1);
+        free(rand_2);
+
+        return;
+    }
 
 #if !USE_UPMEM
     vud_rank_nr_workers(r, worker);
 
     if (r->err) {
-        free(rand);
+        free(rand_1);
+        free(rand_2);
         return;
     }
 #endif
@@ -111,12 +119,12 @@ static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
         };
 
         for (int j = 0; j < 64; ++j) {
-            mat.ptr[j] = rand;
+            mat.ptr[j] = rand_1;
         }
 
         DPU_ASSERT(dpu_copy_to_mrams(r, &mat));
 #else
-        vud_broadcast_transfer(r, size / sizeof(uint64_t), (const uint64_t (*)[]) rand, 0x0);
+        vud_broadcast_transfer(r, size / sizeof(uint64_t), (const uint64_t (*)[]) rand_1, 0x0);
 #endif
 
         // this forces one warm up cycle
@@ -134,7 +142,8 @@ static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
     uint64_t* buffer = calloc(64, size);
 
     if (buffer == NULL) {
-        free(rand);
+        free(rand_1);
+        free(rand_2);
         return;
     }
 
@@ -179,14 +188,17 @@ static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
     printf("gather,%u,%u,%" PRIu64",%"PRIu64",%.02f\n", size, worker, tm, s_clocks_per_sec, rate);
 
     for (int i = 0; i < 64; ++i) {
-        if (memcmp(&buffer[i * size / sizeof(uint64_t)], rand, size) != 0) {
+        if (memcmp(&buffer[i * size / sizeof(uint64_t)], rand_1, size) != 0) {
             printf("sanity check failure: broadcast/gather incorrect for DPU %d\n", i);
 
-            free(rand);
+            free(rand_1);
+            free(rand_2);
             free(buffer);
 
             return;
         }
+
+        memcpy(&buffer[i * size / sizeof(uint64_t)], rand_2, size);
     }
 
     for (int i = -1; i < N_ITER; ++i) {
@@ -260,17 +272,19 @@ static void perform_benchmark_on(vud_rank* r, unsigned worker, unsigned size) {
     printf("gather,%u,%u,%" PRIu64",%"PRIu64",%.02f\n", size, worker, tm, s_clocks_per_sec, rate);
 
     for (int i = 0; i < 64; ++i) {
-        if (memcmp(&buffer[i * size / sizeof(uint64_t)], rand, size) != 0) {
+        if (memcmp(&buffer[i * size / sizeof(uint64_t)], rand_2, size) != 0) {
             printf("sanity check failure: transfer/gather incorrect for DPU %d\n", i);
 
-            free(rand);
+            free(rand_1);
+            free(rand_2);
             free(buffer);
 
             return;
         }
     }
 
-    free(rand);
+    free(rand_1);
+    free(rand_2);
     free(buffer);
 }
 

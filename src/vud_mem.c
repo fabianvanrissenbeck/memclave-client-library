@@ -132,19 +132,21 @@ static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_
 }
 
 void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt, unsigned id, unsigned nr_worker) {
-    for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
-        for (size_t i = 0; i < sz; ++i) {
-            uint64_t mat[8];
+    for (size_t k = id * 1024; k < sz; k += nr_worker * 1024) {
+        for (unsigned group_nr = 0; group_nr < 8; group_nr++) {
+            for (size_t i = 0; i < 1024 && i + k < sz; ++i) {
+                uint64_t mat[8];
 
-            for (size_t j = 0; j < 8; ++j) {
-                mat[j] = (*src)[j * 8 + group_nr][i];
+                for (size_t j = 0; j < 8; ++j) {
+                    mat[j] = (*src)[j * 8 + group_nr][i + k];
+                }
+
+                vud_mram_addr addr = tgt + (i + k) * 8;
+                volatile uint64_t* line = line_for_group(r, addr, group_nr);
+
+                byte_interleave_mat(&mat);
+                mat_to_mem(&mat, line);
             }
-
-            vud_mram_addr addr = tgt + i * 8;
-            volatile uint64_t* line = line_for_group(r, addr, group_nr);
-
-            byte_interleave_mat(&mat);
-            mat_to_mem(&mat, line);
         }
     }
 
@@ -167,20 +169,25 @@ void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64
 
     invoc_memory_fence();
 
-    // for now only 8 workers can be utilized
+    // UPMEM arranges memory in a way that causes 1024 words of one DPU to be
+    // in one contiguous region of memory (still transposed and everything)
+    // By doing 1024 * nr_worker word steps we can distribute work without
+    // causing inefficiencies due to non-local reads
 
-    for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
-        for (size_t i = 0; i < sz; ++i) {
-            vud_mram_addr addr = src + i * 8;
-            volatile uint64_t* line = line_for_group(r, addr, group_nr);
+    for (size_t j = id * 1024; j < sz; j += 1024 * nr_worker) {
+        for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
+            for (size_t i = 0; i + j < sz && i < 1024; ++i) {
+                vud_mram_addr addr = src + (i + j) * 8;
+                volatile uint64_t* line = line_for_group(r, addr, group_nr);
 
-            uint64_t mat[8];
+                uint64_t mat[8];
 
-            mem_to_mat(line, &mat);
-            byte_interleave_mat(&mat);
+                mem_to_mat(line, &mat);
+                byte_interleave_mat(&mat);
 
-            for (unsigned ci_nr = 0; ci_nr < 8; ++ci_nr) {
-                (*tgt)[get_dpu_id(group_nr, ci_nr)][i] = mat[ci_nr];
+                for (unsigned ci_nr = 0; ci_nr < 8; ++ci_nr) {
+                    (*tgt)[get_dpu_id(group_nr, ci_nr)][i + j] = mat[ci_nr];
+                }
             }
         }
     }
