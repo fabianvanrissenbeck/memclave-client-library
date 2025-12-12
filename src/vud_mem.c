@@ -167,10 +167,11 @@ void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64
 
     invoc_memory_fence();
 
-    for (size_t i = id; i < sz; i += nr_worker) {
-        vud_mram_addr addr = src + i * 8;
+    // for now only 8 workers can be utilized
 
-        for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
+    for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
+        for (size_t i = 0; i < sz; ++i) {
+            vud_mram_addr addr = src + i * 8;
             volatile uint64_t* line = line_for_group(r, addr, group_nr);
 
             uint64_t mat[8];
