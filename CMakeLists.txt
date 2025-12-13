@@ -17,6 +17,7 @@ target_include_directories(ime-client-lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ex
 target_link_libraries(ime-client-lib PUBLIC common)
 target_link_libraries(ime-client-lib PUBLIC mbedcrypto)
 target_compile_options(ime-client-lib PRIVATE "-O3")
+target_link_libraries(ime-client-lib PUBLIC m)
 
 add_executable(ime-add-example examples/add.c)
 target_link_libraries(ime-add-example PUBLIC ime-client-lib)
@@ -38,6 +39,36 @@ target_link_libraries(ime-bfs-example PUBLIC ime-client-lib)
 
 add_executable(ime-va-example examples/VA/va.c)
 target_link_libraries(ime-va-example PUBLIC ime-client-lib)
+
+add_executable(ime-hsts-example examples/HST-S/hsts.c)
+target_link_libraries(ime-hsts-example PUBLIC ime-client-lib)
+
+add_executable(ime-hstl-example examples/HST-L/hstl.c)
+target_link_libraries(ime-hstl-example PUBLIC ime-client-lib)
+
+add_executable(ime-scanssa-example examples/SCAN-SSA/scanssa.c)
+target_link_libraries(ime-scanssa-example PUBLIC ime-client-lib)
+
+add_executable(ime-scanrss-example examples/SCAN-RSS/scanrss.c)
+target_link_libraries(ime-scanrss-example PUBLIC ime-client-lib)
+
+add_executable(ime-red-example examples/RED/red.c)
+target_link_libraries(ime-red-example PUBLIC ime-client-lib)
+
+add_executable(ime-trns-example examples/TRNS/trns.c)
+target_link_libraries(ime-trns-example PUBLIC ime-client-lib)
+
+add_executable(ime-sel-example examples/SEL/sel.c)
+target_link_libraries(ime-sel-example PUBLIC ime-client-lib)
+
+add_executable(ime-uni-example examples/UNI/uni.c)
+target_link_libraries(ime-uni-example PUBLIC ime-client-lib)
+
+add_executable(ime-bs-example examples/BS/bs.c)
+target_link_libraries(ime-bs-example PUBLIC ime-client-lib)
+
+add_executable(ime-ts-example examples/TS/ts.c)
+target_link_libraries(ime-ts-example PUBLIC ime-client-lib)
 
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
