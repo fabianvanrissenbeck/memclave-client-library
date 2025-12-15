@@ -287,21 +287,23 @@ int main(int argc, char **argv) {
             printf("Retrieve results\n");
             if(rep >= p.n_warmup)
                 start(&timer, 4, rep - p.n_warmup + timer_fix);
-
-            const vud_mram_size words_row_g = words_row;
-            for (size_t row = 0; row < rows; row++) {
-                uint64_t *dsts[NR_DPUS];
-                for (unsigned i = 0; i < active; i++)
-                    dsts[i] = (uint64_t*)(A_result + row * (size_t)N_ * n + (size_t)(base_col + i) * n);
-                for (unsigned i = active; i < NR_DPUS; i++) dsts[i] = dsts[0];
-                vud_simple_gather(&r, words_row_g,
-                                  (vud_mram_addr)(A_OFFSET + row * (size_t)n * sizeof(T)),
-                                  &dsts);
-                if (r.err) { 
-			fprintf(stderr, "gather row=%zu failed: %s\n", row, vud_error_str(r.err)); 
-			return EXIT_FAILURE; 
-		}
+            /* Gather full DPU slab*/
+            const size_t slab_elems  = (size_t)M_ * m * n;           // elements per DPU
+            const size_t slab_bytes  = slab_elems * sizeof(T);
+            const vud_mram_size wslab = (vud_mram_size)((slab_bytes + 7) / 8);
+           
+            uint64_t *dsts[NR_DPUS];
+            for (unsigned i = 0; i < active; i++) {
+                dsts[i] = (uint64_t*)(A_result + (size_t)(base_col + i) * slab_elems);
             }
+            for (unsigned i = active; i < NR_DPUS; i++) dsts[i] = dsts[0];
+           
+            vud_simple_gather(&r, wslab, (vud_mram_addr)A_OFFSET, &dsts);
+            if (r.err) {
+                fprintf(stderr, "gather slab failed: %s\n", vud_error_str(r.err));
+                return EXIT_FAILURE;
+            }
+
             if(rep >= p.n_warmup)
                 stop(&timer, 4);
 
