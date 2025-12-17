@@ -134,7 +134,7 @@ static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_
     invoc_memory_fence();
 }
 
-void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt, unsigned id, unsigned nr_worker) {
+static void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt, unsigned id, unsigned nr_worker) {
     unsigned n_unaligned = (1024 - (tgt / 8) % 1024) % 1024;
 
     for (unsigned group_nr = id; group_nr < 8; ++group_nr) {
@@ -174,7 +174,7 @@ void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[
     invoc_memory_fence();
 }
 
-void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64], unsigned id, unsigned nr_worker) {
+static void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64], unsigned id, unsigned nr_worker) {
     // flush all relevant cache lines
 
     invoc_memory_fence();

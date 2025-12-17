@@ -1,0 +1,112 @@
+/**
+
+\mainpage The Memclave Client Library
+
+The Memclave Client Library is used to interact with PIM ranks running Memclave.
+It serves as a replacement to UPMEM's host library and follows a similar programming
+paradigm. These pages document the libraries usage.
+
+## Building the Client Library
+
+The Memclave Client Library is meant to be used together with other CMake based projects.
+A viable `CMakeLists.txt` for the project below could be
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(add-example C)
+
+set(CMAKE_C_STANDARD 11)
+
+add_subdirectory(ime-client-lib EXCLUDE_FROM_ALL)
+
+add_executable(add add.c)
+target_link_library(add PUBLIC ime-client-lib)
+```
+which would build the addition example. The subkernel still has to be build seperately.
+
+## Usage Example
+
+We demonstrate a simple use-case as a usage example: A program that adds two
+integer vectors by transfering them to a PIM rank and then reads the result. First,
+just like in UPMEM's case, we have to allocate a rank of DPUs:
+```c
+vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
+
+if (r.err) {
+    puts("Cannot allocate rank.");
+    return 1;
+}
+```
+Here you may already notice that Memclave uses a different mechanism for handling errors.
+Instead of explicitly returning error codes, errors are stored in a single variable of a rank.
+Future operations on the rank are NOPs, if an error value is set. This allows chaining multiple
+PIM operations, without having to do explicit error handling each time.
+
+After allocation, we wait for the rank to become available. This is important for edge-cases,
+were the *loader* has just started up and is not yet ready. We also set the number of worker
+threads responsible for copying data. 
+
+```c
+vud_ime_wait(&r);
+vud_rank_nr_workers(&r, 8);
+```
+
+Once we know the rank is ready, we can exchange a key with the DPU rank. For the example, we'll
+use a random key fetched from `/dev/urandom`.
+
+```c
+uint8_t key[32];
+random_key(key);
+
+vud_ime_install_key(&r, key, NULL, NULL);
+
+if (r.err) {
+    puts("key exchange failed");
+    goto error;
+}
+```
+
+The key exchange will take roughly 10s. Once a session key is established, we can deploy a subkernel,
+in our case the addition subkernel to the rank and transfer input data. 
+```
+// create some input data
+uint64_t a[64];
+uint64_t b[64];
+
+for (int i = 0; i < 64; ++i) {
+    a[i] = i;
+    b[i] = 2 * i;
+}
+
+vud_ime_load(&r, "../add");
+
+vud_broadcast_to(&r, 64, &a, "a");
+vud_broadcast_to(&r, 64, &b, "b");
+```
+Once all inputs are transfered and a kernel is loaded, we can start processing on the DPU side
+and wait for it to finish.
+```
+vud_ime_launch(&r);
+vud_ime_wait(&r);
+```
+Finally, all that is left is fetching back the data and confirming that everything worked out.
+```
+uint64_t c[64][64];
+uint64_t* c_ptr[64];
+
+for (int i = 0; i < 64; ++i) { c_ptr[i] = &c[i][0]; }
+
+vud_gather_from(&r, 64, "c", &c_ptr);
+
+for (int i = 0; i < 64; ++i) {
+    for (int j = 0; j < 64; ++j) {
+        assert(c[i][j] == 3 * j);
+    }
+}
+
+vud_rank_free(&r);
+```
+Here you may also notice that our memory transfer functions have a different signature.
+We use C99's array pointers to describe data movement, instead of UPMEM's transfer matrix
+approach.
+
+*/
