@@ -3,6 +3,8 @@
 #ifndef ROUTER_VUD_H
 #define ROUTER_VUD_H
 
+#include "vud_pool.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -22,6 +24,7 @@ typedef enum vud_error {
     VUD_NOT_WAITING,
     VUD_SYMBOL_NOT_FOUND,
     VUD_SYMBOL_NOT_MRAM,
+    VUD_SYSTEM_THREAD,
     VUD_KEY_XCHG,
 } vud_error;
 
@@ -31,6 +34,7 @@ typedef struct vud_rank {
     vud_error err;
     uint8_t key[32];
     const char* next_sk;
+    vud_pool* pool;
 } vud_rank;
 
 /**
@@ -44,6 +48,18 @@ vud_rank vud_rank_alloc(int rank_nr);
  * @param rank rank to free
  */
 void vud_rank_free(vud_rank* rank);
+
+/**
+ * @brief specify the number of worker threads
+ *
+ * Worker threads are used in all memory transfer functions
+ * due to their quite heavy-weight nature. All other operations use
+ * just one thread (the calling one).
+ *
+ * @param rank rank using the additional worker threads
+ * @param n number of workers - 1 to only use the calling thread
+ */
+void vud_rank_nr_workers(vud_rank* rank, unsigned n);
 
 /**
  * @brief get the current mux state of one DPU line of a rank
@@ -78,6 +94,7 @@ static inline const char* vud_error_str(vud_error err) {
         [VUD_NOT_WAITING] = "DPU is not waiting for guest",
         [VUD_SYMBOL_NOT_FOUND] = "symbol could not be found",
         [VUD_SYMBOL_NOT_MRAM] = "symbol points to a non-MRAM region",
+        [VUD_SYSTEM_THREAD] = "system error (threading)",
         [VUD_KEY_XCHG] = "key exchange failed",
     };
 

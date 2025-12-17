@@ -4,11 +4,19 @@ project(ime-client-lib C)
 set(CMAKE_C_STANDARD 17)
 add_subdirectory(common)
 
-add_library(ime-client-lib src/vud.c src/vud.h src/vud_mem.c src/vud_mem.h src/vud_ime.c src/vud_ime.h src/vud_sk.c src/vud_sk.h)
+option(ENABLE_UPMEM_BENCHMARK "build the MRAM benchmark for UPMEM and not Memclave" OFF)
+
+if (${ENABLE_UPMEM_BENCHMARK})
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(DPU REQUIRED IMPORTED_TARGET dpu)
+endif()
+
+add_library(ime-client-lib src/vud.c src/vud.h src/vud_mem.c src/vud_mem.h src/vud_ime.c src/vud_ime.h src/vud_sk.c src/vud_sk.h src/vud_pool.c src/vud_pool.h)
 target_include_directories(ime-client-lib PUBLIC src)
 target_include_directories(ime-client-lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/examples/xchg/mbedtls/include)
 target_link_libraries(ime-client-lib PUBLIC common)
 target_link_libraries(ime-client-lib PUBLIC mbedcrypto)
+target_compile_options(ime-client-lib PRIVATE "-O3")
 
 add_executable(ime-add-example examples/add.c)
 target_link_libraries(ime-add-example PUBLIC ime-client-lib)
@@ -30,6 +38,19 @@ target_link_libraries(ime-bfs-example PUBLIC ime-client-lib)
 
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
+
+add_executable(mram examples/mram/main.c)
+
+if (${ENABLE_UPMEM_BENCHMARK})
+    target_link_libraries(mram PUBLIC PkgConfig::DPU)
+    target_compile_definitions(mram PRIVATE -DUSE_UPMEM=1)
+else()
+    target_link_libraries(mram PUBLIC ime-client-lib)
+    target_compile_definitions(mram PRIVATE -DUSE_UPMEM=0)
+endif()
+
+add_executable(crypto-bench examples/crypto-bench/main.c)
+target_link_libraries(crypto-bench PUBLIC ime-client-lib)
 
 add_executable(fsl-test examples/fsl-test/main.c)
 target_link_libraries(fsl-test PUBLIC ime-client-lib)

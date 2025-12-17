@@ -30,6 +30,13 @@ int main(void) {
         goto error;
     }
 
+    vud_rank_nr_workers(&r, 8);
+
+    if (r.err) {
+        printf("cannot increase worker count: %s\n", vud_error_str(r.err));
+        goto error;
+    }
+
     // only sets the location of the subkernel as of now
     // tihs is important to fetch symbol locations transparently
     // before launching
@@ -53,6 +60,7 @@ int main(void) {
 
     uint64_t a[64];
     uint64_t b[64];
+    uint64_t zero[64] = { 0 };
     uint64_t tgt_c[64];
 
     for (int i = 0; i < 64; ++i) {
@@ -63,6 +71,7 @@ int main(void) {
 
     vud_broadcast_to(&r, 64, &a, "a");
     vud_broadcast_to(&r, 64, &b, "b");
+    vud_broadcast_to(&r, 64, &zero, "c");
 
     if (r.err) {
         puts("cannot transfer inputs");

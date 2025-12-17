@@ -148,17 +148,13 @@ void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel) {
 }
 
 void vud_ime_load(vud_rank* r, const char* path) {
-    r->next_sk = path;
-}
-
-void vud_ime_launch(vud_rank* r) {
     vud_check_launchable(r);
     if (r->err) { return; }
 
     uint64_t* sk_buf = calloc(1, 128 << 10);
     assert(sk_buf != NULL);
 
-    long sk_size = vud_sk_from_elf(r->next_sk, 128 << 10, sk_buf);
+    long sk_size = vud_sk_from_elf(path, 128 << 10, sk_buf);
 
     if (sk_size < 0) {
         r->err = VUD_SK_NOT_FOUND;
@@ -171,6 +167,14 @@ void vud_ime_launch(vud_rank* r) {
     }
 
     vud_broadcast_transfer(r, sk_size / sizeof(uint64_t), (const uint64_t (*)[]) sk_buf, IME_LOAD_BUFFER);
+    r->next_sk = path;
+}
+
+void vud_ime_launch(vud_rank* r) {
+    if (r->next_sk == NULL) {
+        r->err = VUD_SK_NOT_FOUND;
+        return;
+    }
 
     ime_mram_msg msg = {
         .type = IME_MRAM_MSG_LOAD_SK,

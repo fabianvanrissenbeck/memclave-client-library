@@ -1,7 +1,9 @@
 #include "vud.h"
+#include "vud_mem.h"
 #include "common/vci-msg.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <assert.h>
@@ -81,6 +83,26 @@ static volatile uint64_t* get_ci_addr(vud_rank* rank) {
     return (volatile uint64_t*)((uintptr_t) rank->base + RANK_CI_OFFSET);
 }
 
+/** necessary because our kernel driver is slow - fix it there and remove this function */
+static void touch_all_pages(vud_rank* r) {
+    const size_t buf_size = 1024;
+    uint64_t* buffer = malloc(buf_size * 8 * 64);
+
+    if (buffer == NULL) { return; }
+
+    uint64_t* ptr[64];
+
+    for (int i = 0; i < 64; ++i) {
+        ptr[i] = &buffer[i * buf_size];
+    }
+
+    for (size_t i = 0; i < 64 << 20; i += buf_size * 8) {
+        vud_simple_gather(r, buf_size, i, &ptr);
+    }
+
+    free(buffer);
+}
+
 vud_rank vud_rank_alloc(int rank_nr) {
     assert(rank_nr >= -1 && rank_nr <= 39);
 
@@ -117,11 +139,26 @@ vud_rank vud_rank_alloc(int rank_nr) {
         return new_error(VUD_MEMORY_ERR);
     }
 
-    return (vud_rank) {
+    vud_pool* pool = vud_pool_init(1);
+
+    if (pool == NULL) {
+        munmap((void*) ptr, RANK_MAP_SIZE);
+        close(fd);
+
+        return new_error(VUD_SYSTEM_THREAD);
+    }
+
+    vud_rank res = {
         .base = ptr,
         .fd = fd,
-        .err = VUD_OK
+        .err = VUD_OK,
+        .pool = pool,
     };
+
+    vud_rank_nr_workers(&res, 12);
+    touch_all_pages(&res);
+
+    return res;
 }
 
 void vud_rank_free(vud_rank* rank) {
@@ -133,8 +170,21 @@ void vud_rank_free(vud_rank* rank) {
         close(rank->fd);
     }
 
+    if (rank->pool) {
+        vud_pool_free(rank->pool);
+    }
+
     rank->base = MAP_FAILED;
     rank->fd = -1;
+}
+
+void vud_rank_nr_workers(vud_rank* rank, unsigned n) {
+    vud_pool_free(rank->pool);
+    rank->pool = vud_pool_init(n);
+
+    if (rank->pool == NULL) {
+        rank->err = VUD_SYSTEM_THREAD;
+    }
 }
 
 uint8_t vud_rank_qry_mux(vud_rank* rank) {
