@@ -23,6 +23,7 @@
 #include "support/common.h"
 #include "support/timer.h"
 #include "support/params.h"
+#include "support/prim_results.h"
 
 #ifndef DPU_BINARY
 #define DPU_BINARY "../sel"
@@ -102,6 +103,11 @@ int main(int argc, char **argv) {
     vud_ime_load(&r, DPU_BINARY);
     if (r.err) { 
 	    fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); 
+	    return EXIT_FAILURE; 
+    }
+    vud_rank_nr_workers(&r, 12);
+    if (r.err) { 
+	    fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); 
 	    return EXIT_FAILURE; 
     }
     
@@ -199,6 +205,9 @@ int main(int argc, char **argv) {
             DPU_ASSERT(dpu_probe_stop(&probe));
             #endif
         }
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 
 #if PRINT
         {
@@ -238,6 +247,8 @@ int main(int argc, char **argv) {
             stop(&timer, 3);
 
         T *slab = (T*)malloc((size_t)input_size_dpu_round * nr_of_dpus * sizeof(T));
+        if(rep >= p.n_warmup)
+		    start(&timer, 4, rep - p.n_warmup);
         if (!slab) { fprintf(stderr, "slab malloc failed\n"); return EXIT_FAILURE; }
 
         {
@@ -251,6 +262,8 @@ int main(int argc, char **argv) {
             vud_simple_gather(&r, wordsB, B_base, &dsts);
             if (r.err) { fprintf(stderr, "gather B failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
         }
+        if(rep >= p.n_warmup)
+            stop(&timer, 4);
 
         /* Compact: copy only selected outputs into C2 at global offsets */
         memset(C2, 0, (size_t)input_size_dpu_round * nr_of_dpus * sizeof(T));
@@ -263,8 +276,6 @@ int main(int argc, char **argv) {
             }
         }
         free(slab);
-        if(rep >= p.n_warmup)
-            stop(&timer, 4);
 
     }
 
@@ -279,6 +290,14 @@ int main(int argc, char **argv) {
     print(&timer, 3, p.n_reps);
     printf("DPU-CPU ");
     print(&timer, 4, p.n_reps);
+
+    // update CSV
+#define TEST_NAME "SEL"
+#define RESULTS_FILE "prim_results.csv"
+    //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 4, p.n_reps, "M_D2C");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
 
     #if ENERGY
     double energy;

@@ -29,6 +29,7 @@
 #include "support/params.h"
 #include "support/timer.h"
 #include "support/common.h"   // DTYPE, INPUT_SIZE, dpu_arguments_t
+#include "support/prim_results.h"
 
 #ifndef DPU_BINARY
 #define DPU_BINARY "../bs"
@@ -114,6 +115,11 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); 
 		return EXIT_FAILURE; 
 	}
+        vud_rank_nr_workers(&r, 12);
+        if (r.err) { 
+                fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); 
+                return EXIT_FAILURE; 
+        }
 
         const uint32_t nr_of_dpus = NR_DPUS;
 
@@ -222,6 +228,9 @@ int main(int argc, char **argv) {
 			DPU_ASSERT(dpu_probe_stop(&probe));
 			#endif
 		}
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 		// Print logs if required
 		#if PRINT
 		unsigned int each_dpu = 0;
@@ -264,6 +273,14 @@ int main(int argc, char **argv) {
 	print(&timer, 2, p.n_reps);
 	printf("DPU-CPU Time (ms): ");
 	print(&timer, 3, p.n_reps);
+
+    // update CSV
+#define TEST_NAME "BS"
+#define RESULTS_FILE "prim_results.csv"
+    //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 3, p.n_reps, "M_D2C");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
 
 	#if ENERGY
 	double energy;

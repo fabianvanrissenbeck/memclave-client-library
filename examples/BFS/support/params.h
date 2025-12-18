@@ -25,8 +25,9 @@ static struct Params input_params(int argc, char **argv) {
     struct Params p;
     //p.fileName      = "/home/fabian/bkp/ime-client-library/examples/BFS/data/loc-gowalla_edges.txt";
     //p.fileName      = "/home/fabian/bkp/ime-client-library/examples/BFS/data/lj1_directed_hdr.txt";
-    p.fileName      = "/home/fabian/bkp/ime-client-library/examples/BFS/data/road_pa_undirected_hdr.txt";
-    p.verbosity     = 1;
+    //p.fileName      = "/home/fabian/bkp/ime-client-library/examples/BFS/data/road_pa_undirected_hdr.txt";
+    p.fileName      = "/home/fabian/artifact/ime-client-library/examples/BFS/data/loc-gowalla_edges.txt";
+    p.verbosity     = 2;
     int opt;
     while((opt = getopt(argc, argv, "f:v:h")) >= 0) {
         switch(opt) {

@@ -29,6 +29,7 @@
 #include "support/common.h"
 #include "support/params.h"
 #include "support/timer.h"
+#include "support/prim_results.h"
 
 #ifndef DPU_BINARY
 #define DPU_BINARY "../ts"
@@ -170,6 +171,11 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); 
 		return EXIT_FAILURE; 
 	}
+    vud_rank_nr_workers(&r, 12);
+    if (r.err) { 
+	    fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); 
+	    return EXIT_FAILURE; 
+    }
         
         const uint32_t nr_of_dpus = NR_DPUS;
         
@@ -246,6 +252,7 @@ int main(int argc, char **argv) {
                 const vud_mram_addr TS_OFF    = (vud_mram_addr)(Q_OFF + (vud_mram_addr)q_bytes);
                 const vud_mram_addr MEAN_OFF  = (vud_mram_addr)(TS_OFF + (vud_mram_addr)ts_chunk_bytes);
                 const vud_mram_addr SIGMA_OFF = (vud_mram_addr)(MEAN_OFF + (vud_mram_addr)ts_chunk_bytes);
+		const vud_mram_addr RESULTS_OFF = (vud_mram_addr)(SIGMA_OFF + (vud_mram_addr)ts_chunk_bytes);
 
                 /* 1) push query (same to all DPUs) */
                 {
@@ -320,27 +327,44 @@ int main(int argc, char **argv) {
 			DPU_ASSERT(dpu_probe_stop(&probe));
 #endif
 		}
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 
 		if (rep >= p.n_warmup)
 			start(&timer, 3, rep - p.n_warmup);
-                uint64_t per_dpu[NR_DPUS][2];
-                uint64_t *ptrs[NR_DPUS];
-                for (uint32_t d = 0; d < nr_of_dpus; ++d) ptrs[d] = per_dpu[d];
-                for (uint32_t d = nr_of_dpus; d < NR_DPUS;  ++d) ptrs[d] = ptrs[0];
-                
-                vud_simple_gather(&r, /*words=*/2, /*offset=*/SK_LOG_OFFSET, &ptrs);
-                if (r.err) { fprintf(stderr, "gather failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
-                
-                result.minValue = INT32_MAX;
-                result.minIndex = 0;
-                for (uint32_t d = 0; d < nr_of_dpus; ++d) {
-                    const DTYPE mv  = (DTYPE)(int64_t)per_dpu[d][0];
-                    const uint32_t mi = (uint32_t)per_dpu[d][1];
-                    if (mv > 0 && mv < result.minValue) {
-                        result.minValue = mv;
-                        result.minIndex = (DTYPE)mi + (DTYPE)((uint64_t)d * (uint64_t)slice_per_dpu);
-                    }
-                }
+		/* gather NR_TASKLETS results per DPU from MRAM */
+		const size_t res_bytes = (size_t)NR_TASKLETS * sizeof(dpu_result_t);
+		const vud_mram_size wres = (vud_mram_size)((res_bytes + 7) / 8);
+
+		uint64_t *tmp = (uint64_t*)malloc((size_t)wres * 8 * nr_of_dpus);
+		if (!tmp) { fprintf(stderr, "tmp alloc failed\n"); return EXIT_FAILURE; }
+
+		uint64_t *lanes[NR_DPUS];
+		for (uint32_t d = 0; d < nr_of_dpus; ++d)
+		    lanes[d] = &tmp[(size_t)d * wres];
+		for (uint32_t d = nr_of_dpus; d < NR_DPUS; ++d)
+		    lanes[d] = lanes[0];
+
+		vud_simple_gather(&r, wres, RESULTS_OFF, (uint64_t* (*)[NR_DPUS])&lanes);
+		if (r.err) { free(tmp); fprintf(stderr, "gather results failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+		/* PRIM-style reduction on host */
+		result.minValue = INT32_MAX;
+		result.minIndex = 0;
+
+		for (uint32_t d = 0; d < nr_of_dpus; ++d) {
+		    dpu_result_t *rd = (dpu_result_t *)&tmp[(size_t)d * wres];  // packed results for this DPU
+		    for (uint32_t t = 0; t < NR_TASKLETS; ++t) {
+		        if (rd[t].minValue < result.minValue && rd[t].minValue > 0) {
+		            result.minValue = rd[t].minValue;
+		            result.minIndex = (DTYPE)rd[t].minIndex + (DTYPE)((uint64_t)d * (uint64_t)slice_per_dpu);
+		        }
+		    }
+		}
+
+		free(tmp);
+
 		if(rep >= p.n_warmup)
 			stop(&timer, 3);
 
@@ -378,6 +402,13 @@ int main(int argc, char **argv) {
 	print(&timer, 2, p.n_reps);
 	printf("DPU-CPU Time (ms): ");
 	print(&timer, 3, p.n_reps);
+    // update CSV
+#define TEST_NAME "TS"
+#define RESULTS_FILE "prim_results.csv"
+    //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 4, p.n_reps, "CPU");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 3, p.n_reps, "M_D2C");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
 
 #if ENERGY
 	printf("Energy (J): %f J\t", avg_energy);

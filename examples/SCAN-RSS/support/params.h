@@ -28,8 +28,8 @@ static void usage() {
 struct Params input_params(int argc, char **argv) {
     struct Params p;
     p.input_size    = 3932160;
-    p.n_warmup      = 1;
-    p.n_reps        = 3;
+    p.n_warmup      = 0;
+    p.n_reps        = 1;
     p.exp           = 0;
 
     int opt;

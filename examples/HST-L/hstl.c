@@ -23,6 +23,7 @@
 #include "support/common.h"
 #include "support/timer.h"
 #include "support/params.h"
+#include "support/prim_results.h"
 
 // Define the DPU Binary path as DPU_BINARY here
 #ifndef DPU_BINARY
@@ -87,8 +88,8 @@ static void histogram_host(unsigned int* histo, T* A, unsigned int bins, unsigne
 
 static void push_args_array(vud_rank *r, dpu_arguments_t *args, uint32_t nr_of_dpus) {
     const vud_mram_size words = (vud_mram_size)((sizeof(dpu_arguments_t) + 7u) / 8u);
-    _Alignas(8) uint64_t staged[1024][4];   // supports up to 32B structs; grow if you extend args
-    assert(nr_of_dpus <= 1024);
+    _Alignas(8) uint64_t staged[NR_DPUS][4];   // supports up to 32B structs; grow if you extend args
+    assert(nr_of_dpus <= NR_DPUS);
     assert(words <= 4);
 
     for (uint32_t i = 0; i < nr_of_dpus; ++i) {
@@ -114,6 +115,11 @@ int main(int argc, char **argv) {
 
     vud_ime_load(&r, DPU_BINARY);
     if (r.err) { fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+    vud_rank_nr_workers(&r, 12);
+    if (r.err) { 
+	    fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); 
+	    return EXIT_FAILURE; 
+    }
 
     uint8_t key[32];
     //random_key(key);
@@ -238,6 +244,10 @@ int main(int argc, char **argv) {
             DPU_ASSERT(dpu_probe_stop(&probe));
             #endif
         }
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
+
 
 #if PRINT
         {
@@ -304,6 +314,14 @@ int main(int argc, char **argv) {
     print(&timer, 2, p.n_reps);
     printf("DPU-CPU ");
     print(&timer, 3, p.n_reps);
+
+    // update CSV
+#define TEST_NAME "HST-L"
+#define RESULTS_FILE "prim_results.csv"
+    //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 3, p.n_reps, "M_D2C");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
 
     #if ENERGY
     double energy;

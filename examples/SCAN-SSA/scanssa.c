@@ -23,6 +23,7 @@
 #include "support/common.h"
 #include "support/timer.h"
 #include "support/params.h"
+#include "support/prim_results.h"
 
 // Define the DPU Binary path as DPU_BINARY here
 #ifndef DPU_BINARY
@@ -99,6 +100,11 @@ int main(int argc, char **argv) {
     vud_ime_load(&r, DPU_BINARY);
     if (r.err) { 
 	    fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); 
+	    return EXIT_FAILURE; 
+    }
+    vud_rank_nr_workers(&r, 12);
+    if (r.err) { 
+	    fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); 
 	    return EXIT_FAILURE; 
     }
 
@@ -188,6 +194,7 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "wait k1 failed: %s\n", vud_error_str(r.err)); 
 		return EXIT_FAILURE; 
 	}
+	// stop timer here
         
         if(rep >= p.n_warmup) {
             stop(&timer, 2);
@@ -195,6 +202,11 @@ int main(int argc, char **argv) {
             DPU_ASSERT(dpu_probe_stop(&probe));
             #endif
         }
+
+
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 
 #if PRINT
         {
@@ -269,6 +281,9 @@ int main(int argc, char **argv) {
             DPU_ASSERT(dpu_probe_stop(&probe));
             #endif
         }
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 
 #if PRINT
         {
@@ -293,6 +308,7 @@ int main(int argc, char **argv) {
                 dsts[i] = (uint64_t*)(C2 + (size_t)i * input_size_dpu_round);
             for (uint32_t i = nr_of_dpus; i < NR_DPUS; ++i) dsts[i] = dsts[0];
             vud_simple_gather(&r, wordsB, B_base, &dsts);
+	    printf("wordsB:%d\n", wordsB);
             if (r.err) { fprintf(stderr, "gather B failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
         }
         if(rep >= p.n_warmup)
@@ -313,6 +329,14 @@ int main(int argc, char **argv) {
     print(&timer, 4, p.n_reps);
     printf("DPU-CPU ");
     print(&timer, 5, p.n_reps);
+
+#define TEST_NAME "SCAN-SSA"
+#define RESULTS_FILE "prim_results.csv"
+    //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 5, p.n_reps, "M_D2C");
+    double dpu_ms = prim_timer_ms_avg(&timer, 2, p.n_reps) + prim_timer_ms_avg(&timer, 4, p.n_reps);
+    update_csv(RESULTS_FILE, TEST_NAME, "DPU", dpu_ms);
 
     #if ENERGY
     double energy;

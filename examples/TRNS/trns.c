@@ -24,6 +24,7 @@
 #include "support/common.h"
 #include "support/timer.h"
 #include "support/params.h"
+#include "support/prim_results.h"
 
 #ifndef DPU_BINARY
 #define DPU_BINARY "../trns"
@@ -104,6 +105,11 @@ int main(int argc, char **argv) {
 	    fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); 
 	    return EXIT_FAILURE; 
     }
+    vud_rank_nr_workers(&r, 12);
+    if (r.err) { 
+	    fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); 
+	    return EXIT_FAILURE; 
+    }
     
 #if ENERGY
     struct dpu_probe_t probe;
@@ -161,7 +167,7 @@ int main(int argc, char **argv) {
             }
             /* replicate to fill the lanes array safely */
             for (unsigned i = active; i < NR_DPUS; i++) 
-		    args0[i] = args0[0];
+	    args0[i] = args0[0];
             push_args_array(&r, args0, NR_DPUS);
             if (r.err) { 
 		    fprintf(stderr, "args0 transfer failed: %s\n", vud_error_str(r.err)); 
@@ -171,6 +177,9 @@ int main(int argc, char **argv) {
             /* Push columns for these DPUs: row-by-row, n elements per DPU */
             const vud_mram_size words_row = (vud_mram_size)(((size_t)n * sizeof(T) + 7) / 8);
             const size_t rows = (size_t)M_ * m;
+            printf("Load input data (step 1)\n");
+            if(rep >= p.n_warmup)
+                start(&timer, 1, rep - p.n_warmup + timer_fix);
             for (size_t row = 0; row < rows; row++) {
                 const uint64_t *lanes[NR_DPUS];
                 for (unsigned i = 0; i < active; i++)
@@ -184,6 +193,8 @@ int main(int argc, char **argv) {
 			return EXIT_FAILURE; 
 		}
             }
+            if(rep >= p.n_warmup)
+                stop(&timer, 1);
             printf("Run step 2 on DPU(s) \n");
             // Run DPU kernel
             if(rep >= p.n_warmup){
@@ -208,6 +219,9 @@ int main(int argc, char **argv) {
                 DPU_ASSERT(dpu_probe_stop(&probe));
 #endif
             }
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 #if PRINT
         {
             unsigned int each_dpu = 0;
@@ -272,6 +286,9 @@ int main(int argc, char **argv) {
                 DPU_ASSERT(dpu_probe_stop(&probe));
 #endif
             }
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 #if PRINT
         {
             unsigned int each_dpu = 0;
@@ -327,6 +344,15 @@ int main(int argc, char **argv) {
     print(&timer, 3, p.n_reps);
     printf("DPU-CPU ");
     print(&timer, 4, p.n_reps);
+
+    // update CSV
+#define TEST_NAME "TRNS"
+#define RESULTS_FILE "prim_results.csv"
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 4, p.n_reps, "M_D2C");
+    double dpu_ms = prim_timer_ms_avg(&timer, 2, p.n_reps) + prim_timer_ms_avg(&timer, 3, p.n_reps);
+    update_csv(RESULTS_FILE, TEST_NAME, "DPU", dpu_ms);
 
     #if ENERGY
     double energy;
