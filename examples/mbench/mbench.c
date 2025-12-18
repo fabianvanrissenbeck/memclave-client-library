@@ -3,9 +3,9 @@
 #include <assert.h>
 #include <stdbool.h>
 
-#include "../../src/vud.h"
-#include "../../src/vud_mem.h"
-#include "../../src/vud_ime.h"
+#include <vud.h>
+#include <vud_mem.h>
+#include <vud_ime.h>
 #include "../../src/vud_log.h"
 #include "support/common.h"    // defines T, dpu_arguments_t, dpu_results_t, etc.
 #include "support/params.h"    // parses command-line into struct Params
@@ -19,7 +19,7 @@
 
 #define NR_TASKLETS 16
 //#define ADD 1
-#define ADD 1
+#define SUB 1
 #define NR_DPUS 64
 #define TEST_DPUS 64
 // Pointer declaration
@@ -28,9 +28,18 @@ static T* B;
 static T* Z;
 static T* C2;
 
+static void random_key(uint8_t key[32]) {
+    FILE* fp = fopen("/dev/urandom", "rb");
+
+    assert(fp != NULL);
+    assert(fread(key, 1, 32, fp) == 32);
+
+    fclose(fp);
+}
+
 // Create input arrays
 static void read_input(T* A, T* B, T* Z, unsigned int nr_elements) {
-    srand(0);
+    srand(1);
     printf("nr_elements\t%u\t", nr_elements);
     for (unsigned int i = 0; i < nr_elements; i++) {
         A[i] = (T) (rand()+1);
@@ -71,7 +80,8 @@ int main(int argc, char** argv) {
         //return EXIT_FAILURE;
     }
 
-    vud_rank r = vud_rank_alloc(1);
+    //vud_rank r = vud_rank_alloc(1);
+    vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
 
     if (r.err) {
         puts("Cannot allocate rank.");
@@ -82,6 +92,24 @@ int main(int argc, char** argv) {
 
     if (r.err) {
         puts("cannot wait for rank");
+        goto error;
+    }
+
+    vud_ime_load(&r, "../mbench");
+
+    if (r.err) {
+        puts("cannot load subkernel");
+        goto error;
+    }
+
+    uint8_t key[32];
+    random_key(key);
+
+    // TODO remove this
+    //vud_ime_install_key(&r, key, NULL, NULL);
+
+    if (r.err) {
+        puts("key exchange failed");
         goto error;
     }
 
@@ -176,7 +204,8 @@ int main(int argc, char** argv) {
         // Run DPU kernel
         if(rep >= p.n_warmup)
             start(&timer, 2, rep - p.n_warmup);
-        vud_ime_launch_sk(&r, "../mbench.sk");
+        //vud_ime_launch(&r, "../mbench");
+        vud_ime_launch(&r);
         if (r.err) {
             puts("Failed to launch.");
             return 1;

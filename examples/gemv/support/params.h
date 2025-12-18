@@ -32,8 +32,8 @@ struct Params input_params(int argc, char **argv) {
     struct Params p;
     p.m_size        = 8192;
     p.n_size        = 8192;
-    p.m_size        = 2048;
-    p.n_size        = 2048;
+    //p.m_size        = 2048;
+    //p.n_size        = 2048;
     p.n_warmup      = 0;
     p.n_reps        = 1;
 

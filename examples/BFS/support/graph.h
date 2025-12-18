@@ -3,6 +3,8 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <errno.h>
+#include <unistd.h>
 
 #include "common.h"
 #include "utils.h"
@@ -26,10 +28,12 @@ static struct COOGraph readCOOGraph(const char* fileName) {
     struct COOGraph cooGraph;
 
     // Initialize fields
+    printf("%s\n", fileName);
     FILE* fp = fopen(fileName, "r");
     uint32_t numNodes, numCols;
-    assert(fscanf(fp, "%u", &numNodes));
-    assert(fscanf(fp, "%u", &numCols));
+    fscanf(fp, "%u", &numNodes);
+    fscanf(fp, "%u", &numCols);
+    printf("%d %d\n", numNodes, numCols);
     if(numNodes == numCols) {
         cooGraph.numNodes = numNodes;
     } else {
@@ -41,17 +45,17 @@ static struct COOGraph readCOOGraph(const char* fileName) {
         cooGraph.numNodes += (64 - cooGraph.numNodes%64);
         PRINT_WARNING("        Padding to %u which is a multiple of 64 nodes.", cooGraph.numNodes);
     }
-    assert(fscanf(fp, "%u", &cooGraph.numEdges));
+    fscanf(fp, "%u", &cooGraph.numEdges);
     cooGraph.nodeIdxs = (uint32_t*) malloc(cooGraph.numEdges*sizeof(uint32_t));
     cooGraph.neighborIdxs = (uint32_t*) malloc(cooGraph.numEdges*sizeof(uint32_t));
 
     // Read the neighborIdxs
     for(uint32_t edgeIdx = 0; edgeIdx < cooGraph.numEdges; ++edgeIdx) {
         uint32_t nodeIdx;
-        assert(fscanf(fp, "%u", &nodeIdx));
+        fscanf(fp, "%u", &nodeIdx);
         cooGraph.nodeIdxs[edgeIdx] = nodeIdx;
         uint32_t neighborIdx;
-        assert(fscanf(fp, "%u", &neighborIdx));
+        fscanf(fp, "%u", &neighborIdx);
         cooGraph.neighborIdxs[edgeIdx] = neighborIdx;
     }
 

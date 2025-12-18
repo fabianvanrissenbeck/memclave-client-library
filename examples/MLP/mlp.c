@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <assert.h>
+#include <time.h>
+#include <inttypes.h>
 
 #if ENERGY
 #include <dpu_probe.h>
@@ -18,22 +20,34 @@
 
 #define NR_DPUS 64
 
-#include "../../src/vud.h"
-#include "../../src/vud_mem.h"
-#include "../../src/vud_ime.h"
+#include <vud.h>
+#include <vud_sk.h>
+#include <vud_ime.h>
+#include <vud_mem.h>
 #include "../../src/vud_log.h"
 #include "support/common.h"    // defines T, dpu_arguments_t, dpu_results_t, etc.
 #include "support/params.h"    // parses command-line into struct Params
 #include "support/timer.h"     // for timing host vs DPU if you want
+#include "support/prim_results.h" 
 
-// Define the DPU Binary path as DPU_BINARY here
-#ifndef DPU_BINARY
-#define DPU_BINARY "../mlp.sk"
+/* MRAM layout */
+#ifndef ARG_OFFSET
+#define ARG_OFFSET 0x2000u
+#endif
+#ifndef ARG_SIZE
+#define ARG_SIZE   (sizeof(dpu_arguments_t))
+#endif
+#ifndef A_OFFSET
+#define A_OFFSET   (ARG_OFFSET + ((ARG_SIZE + 0xFFu) & ~0xFFu))
 #endif
 
-#define ARG_OFFSET     0x2000
-#define ARG_SIZE       sizeof(dpu_arguments_t)
-#define A_OFFSET       (ARG_OFFSET + ((ARG_SIZE + 0xFF) & ~0xFF))
+#define MRAM_SIZE_BYTES     (64u << 20)
+#define SK_LOG_SIZE_BYTES   64u
+#define SK_LOG_OFFSET       (MRAM_SIZE_BYTES - SK_LOG_SIZE_BYTES)
+
+#ifndef DPU_BINARY
+#define DPU_BINARY "../mlp"
+#endif
 
 static T** A;
 static T* B;
@@ -82,371 +96,286 @@ static void mlp_host(T* C, T** A, T* B, unsigned int m_size, unsigned int n_size
 	}
 }
 
+static void push_args_array(vud_rank* r, const dpu_arguments_t* args, uint32_t nr_of_dpus) {
+    const size_t words = (sizeof(dpu_arguments_t) + 7u) / 8u;
+    const size_t lane_bytes = words * 8u;
+
+    void* staged = NULL;
+    if (posix_memalign(&staged, 8, NR_DPUS * lane_bytes) != 0) {
+        fprintf(stderr, "push_args_array: staging alloc failed\n");
+        exit(1);
+    }
+    memset(staged, 0, NR_DPUS * lane_bytes);
+
+    for (uint32_t i = 0; i < nr_of_dpus; i++) {
+        memcpy((uint8_t*)staged + (size_t)i * lane_bytes, &args[i], sizeof(dpu_arguments_t));
+    }
+
+    const uint64_t* lanes[NR_DPUS];
+    for (uint32_t i = 0; i < nr_of_dpus; i++) lanes[i] = (const uint64_t*)((uint8_t*)staged + (size_t)i * lane_bytes);
+    for (uint32_t i = nr_of_dpus; i < NR_DPUS; i++) lanes[i] = lanes[0];
+
+    vud_simple_transfer(r, (vud_mram_size)words, (const uint64_t* (*)[NR_DPUS])&lanes, (vud_mram_addr)ARG_OFFSET);
+    free(staged);
+}
+
+
 // Main of the Host Application
 int main(int argc, char **argv) {
 
-	struct Params p = input_params(argc, argv);
+    struct Params p = input_params(argc, argv);
 
-	uint32_t nr_of_dpus = NR_DPUS;
+    const uint32_t nr_of_dpus = NR_DPUS;
+    unsigned int m_size = p.m_size;
+    unsigned int n_size = p.n_size;
 
-	unsigned int i, l;
-	unsigned int m_size = p.m_size;
-	unsigned int n_size = p.n_size;
+    vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
+    if (r.err) { fprintf(stderr, "rank_alloc failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
-        vud_rank r = vud_rank_alloc(1);
-        if (r.err) { 
-                printf(stderr,"rank_alloc failed\n"); return EXIT_FAILURE; 
+    vud_ime_wait(&r);
+    if (r.err) { fprintf(stderr, "ime_wait failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+    vud_ime_load(&r, DPU_BINARY);
+    if (r.err) { fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+    vud_rank_nr_workers(&r, 12);
+    if (r.err) { fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+    uint8_t key[32];
+    //random_key(key);
+ 
+    //vud_ime_install_key(&r, key, NULL, NULL);
+ 
+    if (r.err) {
+        puts("key exchange failed");
+        return -1;
+    }
+
+    // Initialize help data
+    dpu_info = (struct dpu_info_t *)malloc(nr_of_dpus * sizeof(struct dpu_info_t));
+    dpu_arguments_t *input_args = (dpu_arguments_t *)malloc(nr_of_dpus * sizeof(dpu_arguments_t));
+    if (!dpu_info || !input_args) { fprintf(stderr, "malloc failed\n"); return EXIT_FAILURE; }
+
+    uint32_t max_rows_per_dpu = 0;
+    uint32_t n_size_pad = n_size;
+    if (n_size % 2 == 1) n_size_pad++; 
+ 
+    for (uint32_t i = 0; i < nr_of_dpus; i++) {
+        uint32_t rows_per_dpu;
+        uint32_t prev_rows_dpu = 0;
+
+        uint32_t chunks = m_size / nr_of_dpus;
+        rows_per_dpu = chunks;
+
+        uint32_t rest_rows = m_size % nr_of_dpus;
+        if (i < rest_rows) rows_per_dpu++;
+
+        if (rest_rows > 0) {
+            if (i >= rest_rows)
+                prev_rows_dpu = rest_rows * (chunks + 1) + (i - rest_rows) * chunks;
+            else
+                prev_rows_dpu = i * (chunks + 1);
+        } else {
+            prev_rows_dpu = i * chunks;
         }
-	vud_ime_wait(&r);
-        if (r.err) { 
-                printf(stderr,"ime_wait failed\n"); return EXIT_FAILURE; 
-        }
 
-	// Initialize help data
-	dpu_info = (struct dpu_info_t *) malloc(nr_of_dpus * sizeof(struct dpu_info_t));
-	dpu_arguments_t *input_args = (dpu_arguments_t *) malloc(nr_of_dpus * sizeof(dpu_arguments_t));
-	uint32_t max_rows_per_dpu = 0;
-	uint32_t n_size_pad = n_size;
-	if(n_size % 2 == 1){
-		n_size_pad++;
-	}
+        uint32_t rows_per_dpu_pad = rows_per_dpu;
+        if (rows_per_dpu_pad % 2 == 1) rows_per_dpu_pad++;
+        if (rows_per_dpu_pad > max_rows_per_dpu) max_rows_per_dpu = rows_per_dpu_pad;
 
-	// Timer
-	Timer timer;
-	i = 0;
-	for(uint32_t i = 0; i < nr_of_dpus; i++) {
-		uint32_t rows_per_dpu;
-		uint32_t prev_rows_dpu = 0;
-		uint32_t chunks = m_size / nr_of_dpus;
-		rows_per_dpu = chunks;
-		uint32_t rest_rows = m_size % nr_of_dpus;
-		if (i < rest_rows)
-			rows_per_dpu++;
-		if (rest_rows > 0) {
-			if (i >= rest_rows)
-				prev_rows_dpu = rest_rows * (chunks + 1) + (i - rest_rows) * chunks;
-			else
-				prev_rows_dpu = i * (chunks + 1);
-		} else {
-			prev_rows_dpu = i * chunks;
-		}
+        dpu_info[i].rows_per_dpu     = rows_per_dpu;
+        dpu_info[i].rows_per_dpu_pad = rows_per_dpu_pad;
+        dpu_info[i].prev_rows_dpu    = prev_rows_dpu;
 
-		// Keep max rows for parallel transfers
-		uint32_t rows_per_dpu_pad = rows_per_dpu;
-		if (rows_per_dpu_pad % 2 == 1) // 4-byte elements
-			rows_per_dpu_pad++;
-		if (rows_per_dpu_pad > max_rows_per_dpu)
-			max_rows_per_dpu = rows_per_dpu_pad;
+        input_args[i].n_size     = n_size;
+        input_args[i].n_size_pad = n_size_pad;
+        input_args[i].nr_rows    = rows_per_dpu;
+        input_args[i].max_rows   = 0; /* set per rep like PRiM */
+    }
 
-		dpu_info[i].rows_per_dpu = rows_per_dpu;
-		dpu_info[i].rows_per_dpu_pad = rows_per_dpu_pad;
-		dpu_info[i].prev_rows_dpu = prev_rows_dpu;
+    /* buffers (safe: allocate B/B_host with n_size_pad) */
+    A = (T**)malloc(NUM_LAYERS * sizeof(T*));
+    for (unsigned int l = 0; l < NUM_LAYERS; l++) {
+        A[l] = (T*)malloc((size_t)max_rows_per_dpu * nr_of_dpus * n_size_pad * sizeof(T));
+        if (!A[l]) { fprintf(stderr, "malloc A[%u] failed\n", l); return EXIT_FAILURE; }
+    }
 
-		// Copy input arguments to DPU
-		input_args[i].n_size = n_size;
-		input_args[i].n_size_pad = n_size_pad;
-		input_args[i].nr_rows = rows_per_dpu;
-		input_args[i].max_rows = max_rows_per_dpu;
-	}
+    B      = (T*)malloc((size_t)n_size_pad * sizeof(T));
+    B_host = (T*)malloc((size_t)n_size_pad * sizeof(T));
+    C      = (T*)malloc((size_t)m_size * sizeof(T));
+    C_dpu  = (T*)malloc((size_t)max_rows_per_dpu * nr_of_dpus * sizeof(T));
+    B_tmp  = (T*)malloc((size_t)max_rows_per_dpu * nr_of_dpus * sizeof(T));
 
-	A = (T**)malloc(NUM_LAYERS * sizeof(T*));
-	for(l = 0; l < NUM_LAYERS; l++)
-		A[l] = (T*)malloc( max_rows_per_dpu * nr_of_dpus * n_size_pad * sizeof(T));
+    if (!B || !B_host || !C || !C_dpu || !B_tmp) { fprintf(stderr, "malloc failed\n"); return EXIT_FAILURE; }
+    memset(B, 0, (size_t)n_size_pad * sizeof(T));
+    memset(B_host, 0, (size_t)n_size_pad * sizeof(T));
+
+    init_data(A, B, B_host, m_size, n_size);
+    if (n_size_pad > n_size) { B[n_size] = 0; B_host[n_size] = 0; }
+
+    /* MRAM offsets (PRiM layout) */
+    const size_t slice_bytes = (size_t)max_rows_per_dpu * n_size_pad * sizeof(T);
+    const size_t vec_bytes   = (size_t)n_size_pad * sizeof(T);
+
+    const vud_mram_addr A_off = (vud_mram_addr)A_OFFSET;
+    const vud_mram_addr B_off = (vud_mram_addr)(A_OFFSET + slice_bytes);
+    const vud_mram_addr C_off = (vud_mram_addr)(A_OFFSET + slice_bytes + vec_bytes);
+
+    assert((slice_bytes % 8u) == 0);
+    assert((vec_bytes % 8u) == 0);
+
+    const vud_mram_size slice_words = (vud_mram_size)(slice_bytes / 8u);
+    const vud_mram_size vec_words   = (vud_mram_size)(vec_bytes / 8u);
+    const vud_mram_size c_words     = (vud_mram_size)((max_rows_per_dpu * sizeof(T)) / 8u);
 
 
-	B = (T*)malloc(n_size * sizeof(T));
-	B_host = (T*)malloc(n_size * sizeof(T));
-	C = (T*)malloc(m_size * sizeof(T));
-	C_dpu = malloc(max_rows_per_dpu * nr_of_dpus * sizeof(T));
-	B_tmp = malloc(max_rows_per_dpu * nr_of_dpus * sizeof(T));
+    /* CPU reference */
+    Timer timer;
+    start(&timer, 0, 0);
+    mlp_host(C, A, B_host, m_size, n_size);
+    stop(&timer, 0);
 
-	init_data(A, B, B_host, m_size, n_size);
-	printf("after init_data\n");
+    for (unsigned int rep = 0; rep < p.n_warmup + p.n_reps; rep++) {
 
-	// Compute output on CPU (performance comparison and verification purposes)
-	start(&timer, 0, 0);
-	mlp_host(C, A, B_host, m_size, n_size);
-	stop(&timer, 0);
-	printf("after mlp_host\n");
+        if (rep >= p.n_warmup) start(&timer, 1, rep - p.n_warmup);
 
-        // precompute byte & word sizes
-        size_t   slice_bytes = max_rows_per_dpu * n_size_pad * sizeof(T);
-        size_t    vec_bytes  =           n_size_pad * sizeof(T);
-        size_t  arg_words    = (sizeof(dpu_arguments_t) + 7) / 8;
-        size_t slice_words   = slice_bytes      / 8;
-        size_t  vec_words    = vec_bytes        / 8;
-	// MRAM offsets
-        vud_mram_addr A_off = A_OFFSET;
-        vud_mram_addr B_off = A_off + slice_bytes;
-        vud_mram_addr C_off = B_off + vec_bytes;
-	printf("before for loop\n");
-#if 1
-	for (unsigned int rep = 0; rep < p.n_warmup + p.n_reps; rep++) {
-		if (rep >= p.n_warmup)
-			start(&timer, 1, rep - p.n_warmup);
-#if 0
-		// Input arguments
-		i = 0;
-		// Copy input arguments to DPU
-		DPU_FOREACH(dpu_set, dpu, i) {
-			input_args[i].max_rows = max_rows_per_dpu;
-			DPU_ASSERT(dpu_prepare_xfer(dpu, input_args + i));
-		}
-		DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_TO_DPU, "DPU_INPUT_ARGUMENTS", 0, sizeof(dpu_arguments_t), DPU_XFER_DEFAULT));
-#endif
-	       printf("before push dpu_arguments\n");
-	        // 1) push the dpu_arguments_t array
-                {
-                    // build per‐DPU pointers:
-                    const dpu_arguments_t* ptrs[NR_DPUS];
-                    for (unsigned i = 0; i < nr_of_dpus; i++)
-                        ptrs[i] = &input_args[i];
-                    // dummy‐fill any extra slots
-                    for (unsigned i = nr_of_dpus; i < NR_DPUS; i++)
-                        ptrs[i] = ptrs[0];
-  
-                    vud_simple_transfer(&r,
-                                        arg_words,
-                                        (const uint64_t (*)[NR_DPUS])&ptrs,
-                                        ARG_OFFSET);
-                    if (r.err) { 
-                            printf(stderr,"ime_wait failed\n"); return EXIT_FAILURE; 
-                    }
-                }
+        /* args + first layer data */
+        for (uint32_t i = 0; i < nr_of_dpus; i++) input_args[i].max_rows = max_rows_per_dpu;
+        push_args_array(&r, input_args, nr_of_dpus);
+        if (r.err) { fprintf(stderr, "push args failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
-
-#if 0
-		// Copy input array and vector
-		i = 0;
-		DPU_FOREACH(dpu_set, dpu, i) {
-			DPU_ASSERT(dpu_prepare_xfer(dpu, A[0] + dpu_info[i].prev_rows_dpu * n_size));
-		}
-		DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_TO_DPU, DPU_MRAM_HEAP_POINTER_NAME, 0, max_rows_per_dpu * n_size_pad * sizeof(T), DPU_XFER_DEFAULT));
-		i = 0;
-		DPU_FOREACH(dpu_set, dpu, i) {
-			DPU_ASSERT(dpu_prepare_xfer(dpu, B));
-		}
-		DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_TO_DPU, DPU_MRAM_HEAP_POINTER_NAME, max_rows_per_dpu * n_size_pad * sizeof(T) , n_size_pad * sizeof(T), DPU_XFER_DEFAULT));
-#endif
-	       printf("before scatter first layers weight matrix\n");
-		// 2) scatter the first layer’s weight‐matrix slice
-                {
-                    uint64_t* ptrs[NR_DPUS];
-                    for (unsigned i = 0; i < nr_of_dpus; i++) {
-                        // A[0] is the base of layer‐0; prev_rows_dpu gives row offset
-                        T* base = (uint64_t*)(A[0] + dpu_info[i].prev_rows_dpu * n_size);
-                        ptrs[i]  = (uint64_t*) base;
-                    }
-                    for (unsigned i = nr_of_dpus; i < NR_DPUS; i++)
-                        ptrs[i] = ptrs[0];
-  
-                    vud_simple_transfer(&r,
-                                        slice_words,
-					(const uint64_t (*)[NR_DPUS])&ptrs,
-                                        A_off);
-                }
-		
-	       printf("before broadcast input vec B\n");
-                // 3) broadcast the input vector B
-                {
-                    uint64_t* ptrs[NR_DPUS];
-                    for (unsigned i = 0; i < nr_of_dpus; i++)
-                        ptrs[i] = (uint64_t*) B;
-                    for (unsigned i = nr_of_dpus; i < NR_DPUS; i++)
-                        ptrs[i] = ptrs[0];
-         
-                    vud_simple_transfer(&r,
-                                        vec_words,
-					(const uint64_t (*)[NR_DPUS])&ptrs,
-                                        B_off);
-                }
-		if (rep >= p.n_warmup)
-			stop(&timer, 1);
-
-		// Run kernel on DPUs
-		if (rep >= p.n_warmup)
-		{
-			start(&timer, 2, rep - p.n_warmup);
-#if ENERGY
-			DPU_ASSERT(dpu_probe_start(&probe));
-#endif
-		}
-
-	       printf("before launch sk\n");
-		//DPU_ASSERT(dpu_launch(dpu_set, DPU_SYNCHRONOUS));
-		vud_ime_launch_sk(&r, DPU_BINARY);
-                if (r.err) { 
-                        printf(stderr,"launch failed\n"); return EXIT_FAILURE; 
-                }
-                vud_ime_wait(&r);
-                if (r.err) { 
-                        printf(stderr,"wait failed\n"); return EXIT_FAILURE; 
-                }
-
-		if (rep >= p.n_warmup)
-		{
-			stop(&timer, 2);
-#if ENERGY
-			DPU_ASSERT(dpu_probe_stop(&probe));
-#endif
-		}
-
-	       printf("before lay for loop sk\n");
-		for(int lay = 1; lay < NUM_LAYERS; lay++){
-			if (rep >= p.n_warmup)
-				start(&timer, 4, rep - p.n_warmup);
-			i = 0;
-
-#if 0
-			// Copy C_dpu
-			DPU_FOREACH(dpu_set, dpu, i) {
-				DPU_ASSERT(dpu_prepare_xfer(dpu, C_dpu + i * max_rows_per_dpu));
-			}
-			DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_FROM_DPU, DPU_MRAM_HEAP_POINTER_NAME, max_rows_per_dpu * n_size_pad * sizeof(T) + n_size_pad * sizeof(T), max_rows_per_dpu * sizeof(T), DPU_XFER_DEFAULT));
-#endif
-	       		printf("before copy C_dpu\n");
-			/* Gather output back from DPUs into C_dpu */
-                        {
-                            uint64_t *ptrs[NR_DPUS];
-                            /* point each slot to the right place in C_dpu */
-                            for (unsigned i = 0; i < nr_of_dpus; ++i) {
-                                ptrs[i] = (uint64_t*)(C_dpu + i * max_rows_per_dpu);
-                            }
-                            /* dummy-fill remaining slots so we don’t walk off the end */
-                            for (unsigned i = nr_of_dpus; i < NR_DPUS; ++i) {
-                                ptrs[i] = ptrs[0];
-                            }
-			    size_t c_words = (max_rows_per_dpu * sizeof(T)) / 8;
-                            vud_simple_gather(&r,
-                                              c_words,  /* words per-DPU block */
-                                              C_off,
-                                              (uint64_t(*)[NR_DPUS])&ptrs);
-                        }
-	       		printf("after copy C_dpu\n");
-
-			// B = C
-			unsigned int n, j;
-			i = 0;
-			for (n = 0; n < nr_of_dpus; n++) {
-				for (j = 0; j < dpu_info[n].rows_per_dpu; j++) {
-					B_tmp[i] = C_dpu[n * max_rows_per_dpu + j];
-					i++;
-				}
-			}
-#if 0
-			i = 0;
-			DPU_FOREACH(dpu_set, dpu, i) {
-				DPU_ASSERT(dpu_prepare_xfer(dpu, B_tmp));
-			}
-			DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_TO_DPU, DPU_MRAM_HEAP_POINTER_NAME, max_rows_per_dpu * n_size_pad * sizeof(T) , n_size_pad * sizeof(T), DPU_XFER_DEFAULT));
-
-			// Copy next matrix of weights
-			i = 0;
-			DPU_FOREACH(dpu_set, dpu, i) {
-				DPU_ASSERT(dpu_prepare_xfer(dpu, A[lay] + dpu_info[i].prev_rows_dpu * n_size));
-			}
-			DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_TO_DPU, DPU_MRAM_HEAP_POINTER_NAME, 0, max_rows_per_dpu * n_size_pad * sizeof(T), DPU_XFER_DEFAULT));
-#endif
-		printf("before copy B_tmp\n");
-	    {
-                uint64_t* ptrs[NR_DPUS];
-                for (unsigned i = 0; i < nr_of_dpus; i++)
-                    ptrs[i] = (uint64_t*) B_tmp;
-                for (unsigned i = nr_of_dpus; i < NR_DPUS; i++)
-                    ptrs[i] = ptrs[0];
-
-                vud_simple_transfer(&r,
-                                    vec_words,
-                                    (const uint64_t (*)[NR_DPUS])&ptrs,
-                                    B_off);
+        /* scatter A[0] slices */
+        {
+            const uint64_t* lanes[NR_DPUS];
+            for (uint32_t i = 0; i < nr_of_dpus; i++) {
+                lanes[i] = (const uint64_t*)(A[0] + (size_t)dpu_info[i].prev_rows_dpu * n_size);
             }
+            for (uint32_t i = nr_of_dpus; i < NR_DPUS; i++) lanes[i] = lanes[0];
 
-		printf("before scater next layer weight matrix\n");
-            // 6) scatter next layer’s weight‐matrix slice A[lay]
+            vud_simple_transfer(&r, slice_words, (const uint64_t* (*)[NR_DPUS])&lanes, A_off);
+            if (r.err) { fprintf(stderr, "push A0 failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+        }
+
+        /* broadcast B */
+        {
+            const uint64_t* lanes[NR_DPUS];
+            for (uint32_t i = 0; i < nr_of_dpus; i++) lanes[i] = (const uint64_t*)B;
+            for (uint32_t i = nr_of_dpus; i < NR_DPUS; i++) lanes[i] = lanes[0];
+
+            vud_simple_transfer(&r, vec_words, (const uint64_t* (*)[NR_DPUS])&lanes, B_off);
+            if (r.err) { fprintf(stderr, "push B failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+        }
+
+        if (rep >= p.n_warmup) stop(&timer, 1);
+
+        /* launch */
+        if (rep >= p.n_warmup) {
+            start(&timer, 2, rep - p.n_warmup);
+#if ENERGY
+            DPU_ASSERT(dpu_probe_start(&probe));
+#endif
+        }
+
+        vud_ime_launch(&r);
+        if (r.err) { fprintf(stderr, "launch failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+        vud_ime_wait(&r);
+        if (r.err) { fprintf(stderr, "wait failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+        if (rep >= p.n_warmup) {
+            stop(&timer, 2);
+#if ENERGY
+            DPU_ASSERT(dpu_probe_stop(&probe));
+#endif
+        }
+
+        /* allow host MRAM access */
+        vud_rank_rel_mux(&r);
+        vud_ime_wait(&r);
+
+        /* intermediate layers (PRiM orchestration) */
+        for (int lay = 1; lay < NUM_LAYERS; lay++) {
+
+            if (rep >= p.n_warmup) start(&timer, 4, rep - p.n_warmup);
+
+            /* gather C_dpu */
             {
-                uint64_t* ptrs[NR_DPUS];
-                for (unsigned i = 0; i < nr_of_dpus; i++) {
-                    T* base = A[lay] + dpu_info[i].prev_rows_dpu * n_size;
-                    ptrs[i]  = (uint64_t*) base;
+                uint64_t* lanes[NR_DPUS];
+                for (uint32_t i = 0; i < nr_of_dpus; i++) {
+                    lanes[i] = (uint64_t*)(C_dpu + (size_t)i * max_rows_per_dpu);
                 }
-                for (unsigned i = nr_of_dpus; i < NR_DPUS; i++)
-                    ptrs[i] = ptrs[0];
+                for (uint32_t i = nr_of_dpus; i < NR_DPUS; i++) lanes[i] = lanes[0];
 
-                vud_simple_transfer(&r,
-                                    slice_words,
-                                    (const uint64_t (*)[NR_DPUS])&ptrs,
-                                    A_off);
+                vud_simple_gather(&r, c_words, C_off, (uint64_t* (*)[NR_DPUS])&lanes);
+                if (r.err) { fprintf(stderr, "gather C failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
             }
 
-			if(rep >= p.n_warmup)
-				stop(&timer, 4);
-
-			if (rep >= p.n_warmup)
-			{
-				start(&timer, 2, rep - p.n_warmup);
-#if ENERGY
-				DPU_ASSERT(dpu_probe_start(&probe));
-#endif
-			}
-
-			printf("before launch sk again\n");
-			//DPU_ASSERT(dpu_launch(dpu_set, DPU_SYNCHRONOUS));
-		        vud_ime_launch_sk(&r, DPU_BINARY);
-                        if (r.err) { 
-                                printf(stderr,"launch failed\n"); return EXIT_FAILURE; 
-                        }
-                        vud_ime_wait       (&r);
-                        if (r.err) { 
-                                printf(stderr,"wait failed\n"); return EXIT_FAILURE; 
-                        }
-
-			if (rep >= p.n_warmup)
-			{
-				stop(&timer, 2);
-#if ENERGY
-				DPU_ASSERT(dpu_probe_stop(&probe));
-#endif
-			}
-		}
-
-#if PRINT
-		// Display DPU Logs
-		DPU_FOREACH(dpu_set, dpu) {
-			DPU_ASSERT(dpulog_read_for_dpu(dpu.dpu, stdout));
-		}
-#endif
-
-#if 0
-		// Retrieve results
-		if (rep >= p.n_warmup)
-			start(&timer, 3, rep - p.n_warmup);
-		i = 0;
-		DPU_FOREACH(dpu_set, dpu, i) {
-			DPU_ASSERT(dpu_prepare_xfer(dpu, C_dpu + i * max_rows_per_dpu));
-		}
-		DPU_ASSERT(dpu_push_xfer(dpu_set, DPU_XFER_FROM_DPU, DPU_MRAM_HEAP_POINTER_NAME, max_rows_per_dpu * n_size_pad * sizeof(T) + n_size_pad * sizeof(T), max_rows_per_dpu * sizeof(T), DPU_XFER_DEFAULT));
-#endif
-			printf("before gather\n");
-		{
-                uint64_t *ptrs[NR_DPUS];
-                // point each slot to the right place in C_dpu
-                for (unsigned i = 0; i < nr_of_dpus; i++) {
-                    ptrs[i] = (uint64_t*)(C_dpu + i * max_rows_per_dpu);
+            /* B_tmp = C (packed) */
+            {
+                unsigned int idx = 0;
+                for (unsigned int n = 0; n < nr_of_dpus; n++) {
+                    for (unsigned int j = 0; j < dpu_info[n].rows_per_dpu; j++) {
+                        B_tmp[idx] = C_dpu[n * max_rows_per_dpu + j];
+                        idx++;
+                    }
                 }
-                // dummy‐fill any extra slots
-                for (unsigned i = nr_of_dpus; i < NR_DPUS; i++) {
-                    ptrs[i] = ptrs[0];
+                /* if n_size_pad > m_size, pad zeros for broadcast safety */
+                for (unsigned int k = idx; k < n_size_pad; k++) B_tmp[k] = 0;
+            }
+
+            /* broadcast B_tmp */
+            {
+                const uint64_t* lanes[NR_DPUS];
+                for (uint32_t i = 0; i < nr_of_dpus; i++) lanes[i] = (const uint64_t*)B_tmp;
+                for (uint32_t i = nr_of_dpus; i < NR_DPUS; i++) lanes[i] = lanes[0];
+
+                vud_simple_transfer(&r, vec_words, (const uint64_t* (*)[NR_DPUS])&lanes, B_off);
+                if (r.err) { fprintf(stderr, "push B_tmp failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+            }
+
+            /* scatter A[lay] slices */
+            {
+                const uint64_t* lanes[NR_DPUS];
+                for (uint32_t i = 0; i < nr_of_dpus; i++) {
+                    lanes[i] = (const uint64_t*)(A[lay] + (size_t)dpu_info[i].prev_rows_dpu * n_size);
                 }
-		size_t c_words = (max_rows_per_dpu * sizeof(T)) / 8;
-                vud_simple_gather(&r,
-                                  c_words,     /* words per‐DPU block */
-                                  C_off,
-                                  (uint64_t(*)[NR_DPUS])&ptrs);
-                }
-		if(rep >= p.n_warmup)
-			stop(&timer, 3);
-	}
-#endif
+                for (uint32_t i = nr_of_dpus; i < NR_DPUS; i++) lanes[i] = lanes[0];
+
+                vud_simple_transfer(&r, slice_words, (const uint64_t* (*)[NR_DPUS])&lanes, A_off);
+                if (r.err) { fprintf(stderr, "push A[%d] failed: %s\n", lay, vud_error_str(r.err)); return EXIT_FAILURE; }
+            }
+
+            if (rep >= p.n_warmup) stop(&timer, 4);
+
+            /* launch again */
+            if (rep >= p.n_warmup) start(&timer, 2, rep - p.n_warmup);
+
+            vud_ime_launch(&r);
+            if (r.err) { fprintf(stderr, "launch failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+            vud_ime_wait(&r);
+            if (r.err) { fprintf(stderr, "wait failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+
+            if (rep >= p.n_warmup) stop(&timer, 2);
+
+            vud_rank_rel_mux(&r);
+            vud_ime_wait(&r);
+        }
+
+        /* final gather for this rep */
+        if (rep >= p.n_warmup) start(&timer, 3, rep - p.n_warmup);
+        {
+            uint64_t* lanes[NR_DPUS];
+            for (uint32_t i = 0; i < nr_of_dpus; i++) {
+                lanes[i] = (uint64_t*)(C_dpu + (size_t)i * max_rows_per_dpu);
+            }
+            for (uint32_t i = nr_of_dpus; i < NR_DPUS; i++) lanes[i] = lanes[0];
+
+            vud_simple_gather(&r, c_words, C_off, (uint64_t* (*)[NR_DPUS])&lanes);
+            if (r.err) { fprintf(stderr, "final gather C failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+        }
+        if (rep >= p.n_warmup) stop(&timer, 3);
+    }
 
 #if ENERGY
 	double acc_energy, avg_energy, acc_time, avg_time;
@@ -455,6 +384,11 @@ int main(int argc, char **argv) {
 	DPU_ASSERT(dpu_probe_get(&probe, DPU_TIME, DPU_ACCUMULATE, &acc_time));
 	DPU_ASSERT(dpu_probe_get(&probe, DPU_TIME, DPU_AVERAGE, &avg_time));
 #endif
+	double total_us = (timer.time[1] + timer.time[2] + timer.time[4] + timer.time[3]); // CPU↔DPU + Kernel + Inter-DPU + DPU↔CPU
+        double total_s  = total_us / 1e6;
+        double thr      = ((double)p.batch_size) / total_s;
+        printf("Throughput: %.2f samples/s  (batch=%u)\n", thr, p.batch_size);
+
 
 	// Print timing results
 	printf("CPU Version Time (ms): ");
@@ -468,44 +402,49 @@ int main(int argc, char **argv) {
 	printf("DPU-CPU Time (ms): ");
 	print(&timer, 3, p.n_reps);
 
+        // update CSV
+#define TEST_NAME "MLP"
+#define RESULTS_FILE "prim_results.csv"
+        //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+        update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+        update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 3, p.n_reps, "M_D2C");
+        update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
+
 #if ENERGY
 	printf("Energy (J): %f J\t", avg_energy);
 #endif
 	printf("\n\n");
 
-	// Check output
-	bool status = true;
-	unsigned int n, j;
-	i = 0;
-	for (n = 0; n < nr_of_dpus; n++) {
-		for (j = 0; j < dpu_info[n].rows_per_dpu; j++) {
-			if(C[i] != C_dpu[n * max_rows_per_dpu + j]) {
-				status = false;
+    // Check output
+    bool status = true;
+    unsigned int idx = 0;
+    for (unsigned int n = 0; n < nr_of_dpus; n++) {
+        for (unsigned int j = 0; j < dpu_info[n].rows_per_dpu; j++) {
+            if (C[idx] != C_dpu[n * max_rows_per_dpu + j]) {
+                status = false;
 #if PRINT
-				printf("%d: %d -- %d\n", i, C[i], C_dpu[n * max_rows_per_dpu + j]);
+                printf("%u: %u -- %u\n", idx, (unsigned)C[idx], (unsigned)C_dpu[n * max_rows_per_dpu + j]);
 #endif
-			}
-			i++;
-		}
-	}
-	if (status) {
-		printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
-	} else {
-		printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
-	}
+            }
+            idx++;
+        }
+    }
+
+    if (status) printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+    else        printf("[" ANSI_COLOR_RED   "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
 
 	// Deallocation
-	for(i = 0; i < NUM_LAYERS; i++)
+	for(int i = 0; i < NUM_LAYERS; i++)
 		free(A[i]);
 	free(A);
 	free(B);
 	free(C);
 	free(C_dpu);
-        vud_rank_free(&r);
 
 #if ENERGY
 	DPU_ASSERT(dpu_probe_deinit(&probe));
 #endif
-
-	return status ? 0 : -1;
+    
+        vud_rank_free(&r);
+	return 0;
 }
