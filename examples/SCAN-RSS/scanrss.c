@@ -300,6 +300,9 @@ int main(int argc, char **argv) {
             DPU_ASSERT(dpu_probe_stop(&probe));
             #endif
         }
+	vud_rank_rel_mux(&r);
+
+	vud_ime_wait(&r);
 #if PRINT
         {
             unsigned int each_dpu = 0;

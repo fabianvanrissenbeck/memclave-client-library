@@ -70,6 +70,12 @@ target_link_libraries(ime-bs-example PUBLIC ime-client-lib)
 add_executable(ime-ts-example examples/TS/ts.c)
 target_link_libraries(ime-ts-example PUBLIC ime-client-lib)
 
+add_executable(ime-spmv-example examples/SpMV/spmv.c)
+target_link_libraries(ime-spmv-example PUBLIC ime-client-lib)
+
+add_executable(ime-nw-example examples/NW/nw.c)
+target_link_libraries(ime-nw-example PUBLIC ime-client-lib)
+
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
 

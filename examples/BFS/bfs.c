@@ -3,12 +3,13 @@
 * BFS Host Application Source File
 *
 */
-#include <assert.h>
-#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#include <assert.h>
+#include <getopt.h>
 #include <time.h>
 #include <inttypes.h>
 
@@ -419,6 +420,11 @@ int main(int argc, char** argv) {
 	nodelvl = nodeLevel[n];
 	nodelvlref = nodeLevelReference[n];
 	nodes = n;
+    }
+    if (!mism) {
+        printf("[OK] Outputs are equal\n");
+    } else {
+        printf("[ERROR] Outputs differ!\n");
     }
     //printf("nodelvl:%d, nodelvlref:%d nodes:%d\n", nodelvl, nodelvlref, nodes);
         // update CSV
