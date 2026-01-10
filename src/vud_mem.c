@@ -54,7 +54,7 @@ static void byte_interleave_mat(uint64_t (*mat)[8]) {
 }
 
 static void mat_to_mem(const uint64_t (*mat)[8], volatile uint64_t* mem) {
-    __asm__(
+    __asm__ volatile(
         "movq 0(%0), %%mm0\n"
         "movntq %%mm0, 0(%1)\n"
         "movq 8(%0), %%mm0\n"
@@ -71,9 +71,10 @@ static void mat_to_mem(const uint64_t (*mat)[8], volatile uint64_t* mem) {
         "movntq %%mm0, 48(%1)\n"
         "movq 56(%0), %%mm0\n"
         "movntq %%mm0, 56(%1)\n"
+	"emms\n"
         :
         : "r" (&(*mat)[0]), "r" (mem)
-        : "mm0"
+        : "mm0", "memory"
     );
 }
 
@@ -89,15 +90,15 @@ static void mem_to_mat(const volatile uint64_t* mem, uint64_t (*mat)[8]) {
 }
 
 static void flush_cache_line(volatile uint64_t* mem) {
-    __asm__(
+    __asm__ volatile(
         "clflushopt 0(%0)\n"
         :
-        : "r" (mem)
+        : "r" (mem) : "memory"
     );
 }
 
 static void invoc_memory_fence(void) {
-    __asm__("mfence\n");
+    __asm__ volatile("mfence\n"::: "memory");
 }
 
 static volatile uint64_t* line_for_group(vud_rank* r, vud_mram_addr addr, unsigned group_nr) {
@@ -137,7 +138,7 @@ static void intl_broadcast_transfer(vud_rank* r, vud_mram_size sz, const uint64_
 static void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* (*src)[64], vud_mram_addr tgt, unsigned id, unsigned nr_worker) {
     unsigned n_unaligned = (1024 - (tgt / 8) % 1024) % 1024;
 
-    for (unsigned group_nr = id; group_nr < 8; ++group_nr) {
+    for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
         for (size_t i = 0; i < n_unaligned && i < sz; ++i) {
             uint64_t mat[8];
 
