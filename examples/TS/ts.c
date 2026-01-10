@@ -327,9 +327,17 @@ int main(int argc, char **argv) {
 			DPU_ASSERT(dpu_probe_stop(&probe));
 #endif
 		}
-	vud_rank_rel_mux(&r);
+	        vud_rank_rel_mux(&r);
+                if (r.err) { 
+			fprintf(stderr, "mux rel failed: %s\n", vud_error_str(r.err)); 
+			return EXIT_FAILURE; 
+		}
 
-	vud_ime_wait(&r);
+	        vud_ime_wait(&r);
+                if (r.err) { 
+			fprintf(stderr, "wait failed: %s\n", vud_error_str(r.err)); 
+			return EXIT_FAILURE; 
+		}
 
 		if (rep >= p.n_warmup)
 			start(&timer, 3, rep - p.n_warmup);
@@ -349,7 +357,6 @@ int main(int argc, char **argv) {
 		vud_simple_gather(&r, wres, RESULTS_OFF, (uint64_t* (*)[NR_DPUS])&lanes);
 		if (r.err) { free(tmp); fprintf(stderr, "gather results failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
-		/* PRIM-style reduction on host */
 		result.minValue = INT32_MAX;
 		result.minIndex = 0;
 

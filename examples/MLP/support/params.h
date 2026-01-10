@@ -30,8 +30,9 @@ struct Params input_params(int argc, char **argv) {
     struct Params p;
     p.m_size        = 163840;
     p.n_size        = 4096;
-    p.m_size        = 2048;
-    p.n_size        = 2048;
+    //p.m_size        = 4096;
+    //p.m_size        = 2048;
+    //p.n_size        = 2048;
     p.n_warmup      = 0;
     p.n_reps        = 1;
     p.batch_size    = 1;

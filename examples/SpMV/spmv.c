@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     initVector(inVector, numCols);
     memset(outVector, 0, ROUND_UP_TO_MULTIPLE_OF_8(numRows * sizeof(float)));
 
-    // Partition rows across DPUs (same formula as PRIM)
+    // Partition rows across DPUs
     const uint32_t numRowsPerDPU = ROUND_UP_TO_MULTIPLE_OF_2((numRows - 1) / numDPUs + 1);
     PRINT_INFO(p.verbosity >= 1, "Assigning %u rows per DPU", numRowsPerDPU);
 
@@ -125,10 +125,6 @@ int main(int argc, char** argv) {
     const uint32_t dpuInVec_m    = dpuNonzeros_m + NONZEROS_BYTES;
     const uint32_t dpuOutVec_m   = dpuInVec_m    + INVEC_BYTES;
     const uint32_t totalBytes    = dpuOutVec_m   + OUTVEC_BYTES_DPU;
-
-    // Keep the same "don’t collide with SK log area" check style as BFS ports
-    // (You can remove this if you don’t reserve SK log space for this benchmark.)
-    assert(totalBytes <= SK_LOG_OFFSET);
 
     // Per-DPU params + per-DPU host buffers (must exist for all 64 DPUs)
     struct DPUParams dpuParams[NR_DPUS];
@@ -317,9 +313,9 @@ int main(int argc, char** argv) {
         }
     }
     if (status) {
-        printf("[OK] Outputs are equal\n");
+        printf("\n[OK] Outputs are equal\n");
     } else {
-        printf("[ERROR] Outputs differ!\n");
+        printf("\n[ERROR] Outputs differ!\n");
     }
 
     // Cleanup

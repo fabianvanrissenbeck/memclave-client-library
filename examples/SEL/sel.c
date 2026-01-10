@@ -221,9 +221,6 @@ int main(int argc, char **argv) {
         }
 #endif
 
-        printf("Retrieve results\n");
-        //dpu_results_t results[nr_of_dpus];
-        //uint32_t* results_scan = malloc(nr_of_dpus * sizeof(uint32_t));
         i = 0;
         acc = 0;
 
@@ -235,7 +232,7 @@ int main(int argc, char **argv) {
             uint64_t *ptrs[NR_DPUS];
             for (uint32_t d = 0; d < nr_of_dpus; ++d) ptrs[d] = &per_dpu_totals[d];
             for (uint32_t d = nr_of_dpus; d < NR_DPUS; ++d) ptrs[d] = ptrs[0];
-            vud_simple_gather(&r, /*words=*/1, /*offset=*/SK_LOG_OFFSET, &ptrs);
+            vud_simple_gather(&r, 1, SK_LOG_OFFSET, &ptrs);
             if (r.err) { fprintf(stderr, "gather totals failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
         }
         T per_dpu_offsets[NR_DPUS];
@@ -265,7 +262,7 @@ int main(int argc, char **argv) {
         if(rep >= p.n_warmup)
             stop(&timer, 4);
 
-        /* Compact: copy only selected outputs into C2 at global offsets */
+        /* copy outputs into C2 at global offsets */
         memset(C2, 0, (size_t)input_size_dpu_round * nr_of_dpus * sizeof(T));
         for (uint32_t d = 0; d < nr_of_dpus; ++d) {
             const T tcnt = (T)per_dpu_totals[d];
@@ -317,9 +314,9 @@ int main(int argc, char **argv) {
         }
     }
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
 
     // Deallocation

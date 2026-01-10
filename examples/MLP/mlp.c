@@ -38,6 +38,8 @@
 #define ARG_SIZE   (sizeof(dpu_arguments_t))
 #endif
 #ifndef A_OFFSET
+//#define ALIGN_UP(x,a) (((x)+(a)-1) & ~((a)-1))
+//#define A_OFFSET ALIGN_UP(ARG_OFFSET + ARG_SIZE, 0x2000u)
 #define A_OFFSET   (ARG_OFFSET + ((ARG_SIZE + 0xFFu) & ~0xFFu))
 #endif
 
@@ -48,6 +50,23 @@
 #ifndef DPU_BINARY
 #define DPU_BINARY "../mlp"
 #endif
+
+#define CTRL_OFFSET (ARG_OFFSET + 0x40u)
+
+typedef struct __attribute__((aligned(8))) {
+    uint32_t cmd;      // 0=IDLE, 1=RUN, 2=EXIT
+    uint32_t job_id;
+    uint32_t status;   // 0=WAITING, 1=RUNNING, 2=DONE, 3=EXITED
+    uint32_t _pad;
+} ctrl_t;
+
+#define CMD_IDLE 0
+#define CMD_RUN  1
+#define CMD_EXIT 2
+#define ST_WAITING 0
+#define ST_RUNNING 1
+#define ST_DONE    2
+#define ST_EXITED  3
 
 static T** A;
 static T* B;
@@ -119,6 +138,19 @@ static void push_args_array(vud_rank* r, const dpu_arguments_t* args, uint32_t n
     free(staged);
 }
 
+static void push_ctrl_broadcast(vud_rank *r, ctrl_t ctrl) {
+    const vud_mram_size words = (vud_mram_size)((sizeof(ctrl_t) + 7u) / 8u);
+    _Alignas(8) uint64_t staged[NR_DPUS][2];
+    const uint64_t *lanes[NR_DPUS];
+
+    for (uint32_t i = 0; i < NR_DPUS; i++) {
+        memset(staged[i], 0, words * 8u);
+        memcpy(staged[i], &ctrl, sizeof(ctrl_t));
+        lanes[i] = staged[i];
+    }
+    vud_simple_transfer(r, words, (const uint64_t (*)[NR_DPUS])&lanes, (vud_mram_addr)CTRL_OFFSET);
+}
+
 
 // Main of the Host Application
 int main(int argc, char **argv) {
@@ -138,7 +170,7 @@ int main(int argc, char **argv) {
     vud_ime_load(&r, DPU_BINARY);
     if (r.err) { fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
-    vud_rank_nr_workers(&r, 12);
+    vud_rank_nr_workers(&r, 8);
     if (r.err) { fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
     uint8_t key[32];
@@ -159,7 +191,7 @@ int main(int argc, char **argv) {
     uint32_t max_rows_per_dpu = 0;
     uint32_t n_size_pad = n_size;
     if (n_size % 2 == 1) n_size_pad++; 
- 
+
     for (uint32_t i = 0; i < nr_of_dpus; i++) {
         uint32_t rows_per_dpu;
         uint32_t prev_rows_dpu = 0;
@@ -235,7 +267,17 @@ int main(int argc, char **argv) {
     mlp_host(C, A, B_host, m_size, n_size);
     stop(&timer, 0);
 
+
+    ctrl_t c = { .cmd=CMD_RUN, .job_id=1, .status=ST_WAITING, ._pad=0 };
     for (unsigned int rep = 0; rep < p.n_warmup + p.n_reps; rep++) {
+
+        c.cmd=CMD_RUN; c.job_id=1; c.status=ST_WAITING; c._pad=0;
+        push_ctrl_broadcast(&r, c);
+        vud_ime_launch(&r);
+        if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return -1; }
+        vud_ime_wait(&r);
+        if (r.err) { fprintf(stderr, "vud_ime_wait failed\n"); return -1; }
+ 
 
         if (rep >= p.n_warmup) start(&timer, 1, rep - p.n_warmup);
 
@@ -275,9 +317,9 @@ int main(int argc, char **argv) {
             DPU_ASSERT(dpu_probe_start(&probe));
 #endif
         }
-
-        vud_ime_launch(&r);
-        if (r.err) { fprintf(stderr, "launch failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+	// resume DPU
+	vud_rank_rel_mux(&r);
+    	if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed\n"); return -1; }
 
         vud_ime_wait(&r);
         if (r.err) { fprintf(stderr, "wait failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
@@ -289,12 +331,10 @@ int main(int argc, char **argv) {
 #endif
         }
 
-        /* allow host MRAM access */
-        vud_rank_rel_mux(&r);
-        vud_ime_wait(&r);
-
-        /* intermediate layers (PRiM orchestration) */
+        /* intermediate layers */
         for (int lay = 1; lay < NUM_LAYERS; lay++) {
+            c.cmd=CMD_RUN; c.job_id=1; c.status=ST_WAITING; c._pad=0;
+	    push_ctrl_broadcast(&r, c);
 
             if (rep >= p.n_warmup) start(&timer, 4, rep - p.n_warmup);
 
@@ -350,17 +390,21 @@ int main(int argc, char **argv) {
             /* launch again */
             if (rep >= p.n_warmup) start(&timer, 2, rep - p.n_warmup);
 
-            vud_ime_launch(&r);
-            if (r.err) { fprintf(stderr, "launch failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
+	    vud_rank_rel_mux(&r);
+    	    if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed\n"); return -1; }
 
             vud_ime_wait(&r);
             if (r.err) { fprintf(stderr, "wait failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
             if (rep >= p.n_warmup) stop(&timer, 2);
 
-            vud_rank_rel_mux(&r);
-            vud_ime_wait(&r);
         }
+        c.cmd=CMD_EXIT; c.job_id=1; c.status=ST_WAITING; c._pad=0;
+        push_ctrl_broadcast(&r, c);
+	vud_rank_rel_mux(&r);
+    	if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed\n"); return -1; }
+        vud_ime_wait(&r);
+        if (r.err) { fprintf(stderr, "vud_ime_wait failed %d\n", r.err); return -1; }
 
         /* final gather for this rep */
         if (rep >= p.n_warmup) start(&timer, 3, rep - p.n_warmup);
@@ -384,11 +428,6 @@ int main(int argc, char **argv) {
 	DPU_ASSERT(dpu_probe_get(&probe, DPU_TIME, DPU_ACCUMULATE, &acc_time));
 	DPU_ASSERT(dpu_probe_get(&probe, DPU_TIME, DPU_AVERAGE, &avg_time));
 #endif
-	double total_us = (timer.time[1] + timer.time[2] + timer.time[4] + timer.time[3]); // CPU↔DPU + Kernel + Inter-DPU + DPU↔CPU
-        double total_s  = total_us / 1e6;
-        double thr      = ((double)p.batch_size) / total_s;
-        printf("Throughput: %.2f samples/s  (batch=%u)\n", thr, p.batch_size);
-
 
 	// Print timing results
 	printf("CPU Version Time (ms): ");
@@ -430,8 +469,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (status) printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
-    else        printf("[" ANSI_COLOR_RED   "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+    if (status) printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+    else        printf("\n[" ANSI_COLOR_RED   "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
 
 	// Deallocation
 	for(int i = 0; i < NUM_LAYERS; i++)

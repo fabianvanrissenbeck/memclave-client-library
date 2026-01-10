@@ -117,10 +117,10 @@ int main(int argc, char **argv) {
     double cc_min = 0;
 #endif
 
-    const unsigned int input_size = p.exp == 0 ? p.input_size * nr_of_dpus : p.input_size; // Total input size (weak or strong scaling)
+    const unsigned int input_size = p.exp == 0 ? p.input_size * nr_of_dpus : p.input_size; // Total input size
     const unsigned int input_size_8bytes = 
-        ((input_size * sizeof(T)) % 8) != 0 ? roundup(input_size, 8) : input_size; // Input size per DPU (max.), 8-byte aligned
-    const unsigned int input_size_dpu = divceil(input_size, nr_of_dpus); // Input size per DPU (max.)
+        ((input_size * sizeof(T)) % 8) != 0 ? roundup(input_size, 8) : input_size; // Input size per DPU
+    const unsigned int input_size_dpu = divceil(input_size, nr_of_dpus); // Input size per DPU
     const unsigned int input_size_dpu_8bytes = 
         ((input_size_dpu * sizeof(T)) % 8) != 0 ? roundup(input_size_dpu, 8) : input_size_dpu; // Input size per DPU (max.), 8-byte aligned
     const size_t bytes_per_dpu = (size_t)input_size_dpu_8bytes * sizeof(T);
@@ -307,9 +307,9 @@ int main(int argc, char **argv) {
     bool status = true;
     if(count != count_host) status = false;
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
 
     // Deallocation

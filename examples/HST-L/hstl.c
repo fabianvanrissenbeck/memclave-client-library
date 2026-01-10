@@ -199,7 +199,7 @@ int main(int argc, char **argv) {
         memset(histo_host, 0, p.bins * sizeof(unsigned int));
         memset(histo, 0, nr_of_dpus * p.bins * sizeof(unsigned int));
 
-        // Compute output on CPU (performance comparison and verification purposes)
+        // Compute output on CPU
         if(rep >= p.n_warmup)
             start(&timer, 0, rep - p.n_warmup);
         histogram_host(histo_host, A, p.bins, p.input_size, 1, nr_of_dpus);
@@ -363,43 +363,10 @@ int main(int argc, char **argv) {
 		if (itr >10) break;
         }
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
-
-#if 0
-    {
-    int nb = (int)nr_of_dpus;              // NOT NR_DPUS if that’s just the cap
-    #define LANES 64
-    #define WORDS_PER_DPU 8  // we read 1 x 8B per DPU
-    
-    uint64_t logs[LANES * WORDS_PER_DPU];
-    uint64_t* ptrs[LANES];
-    for (int d = 0; d < nr_of_dpus; ++d) {
-        ptrs[d] = &logs[d*WORDS_PER_DPU];
-    }
-    vud_simple_gather(&r, WORDS_PER_DPU, SK_LOG_OFFSET, &ptrs);
-    uint64_t max_cycles = 0;
-    uint64_t magic;
-    uint64_t bins;
-    uint64_t size;
-    uint64_t transfer_size = 0;
-    uint64_t count_sum = 0;
-    uint64_t histo_dpu[3];
-    for (int d = 0; d < nb; ++d) {
-        magic = logs[d * WORDS_PER_DPU + 0];
-        bins = logs[d * WORDS_PER_DPU + 1];
-        size  = logs[d * WORDS_PER_DPU + 2];
-        transfer_size  = logs[d * WORDS_PER_DPU + 3];
-        //count_sum  = logs[d * WORDS_PER_DPU + 4];
-        //histo_dpu[0]  = logs[d * WORDS_PER_DPU + 1];
-        //histo_dpu[1]  = logs[d * WORDS_PER_DPU + 2];
-        //histo_dpu[2]  = logs[d * WORDS_PER_DPU + 3];
-        printf("DPU[%d] magic:%llu bins:%llu size:%llu transfer_size:%llu \n", d, magic, bins, size, transfer_size);
-    }
-    }
-#endif
 
     // Deallocation
     free(A);

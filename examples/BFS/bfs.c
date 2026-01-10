@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
     uint64_t* currentFrontier = calloc(numNodes/64, sizeof(uint64_t));
     uint64_t* nextFrontier = calloc(numNodes/64, sizeof(uint64_t));
 
-    // init frontier to node 0 (same as PRIM)
+    // init frontier to node 0
     setBit(nextFrontier[0], 0);
     uint32_t level = 1;
 
@@ -183,7 +183,6 @@ int main(int argc, char** argv) {
         dpuParams[d].dpuVisited_m          = dpuVisited_m;
         dpuParams[d].dpuCurrentFrontier_m  = dpuCur_m;
         dpuParams[d].dpuNextFrontier_m     = dpuNext_m;
-        //dpuParams[d].dpuNextFrontierPriv_m = dpuNextPriv_m;
 
         // --- rowptr buffer (always allocated) ---
         uint32_t* rp = (uint32_t*)malloc(ROWPTR_BYTES);
@@ -271,17 +270,6 @@ int main(int argc, char** argv) {
         stopTimer(&timer);
         dpuTime += getElapsedTime(timer);
         PRINT_INFO(p.verbosity >= 2, "    Level DPU Time: %f ms", getElapsedTime(timer)*1e3);
-
-        // Use SK log for kernel cycles
-        //uint64_t logs[64][8];
-        //gather_sklog(&r, logs);
-        //uint64_t compute_cycles = max_slot(logs, 1);
-        //double kernel_ms = (compute_cycles * 1000.0) / calib.f_hz;
-        //dpuTime += kernel_ms;
-
-        //PRINT_INFO(p.verbosity >= 2,
-        //    "DPU kernel (cycles→ms): %.3f ms [cycles=%" PRIu64 ", f=%.1f MHz, host %.3f ms]",
-        //    kernel_ms, compute_cycles, calib.f_hz/1e6, getElapsedTime(timer)*1e3);
 
         // Gather nextFrontier from ALL DPUs and union them
         startTimer(&timer);
@@ -426,7 +414,6 @@ int main(int argc, char** argv) {
     } else {
         printf("[ERROR] Outputs differ!\n");
     }
-    //printf("nodelvl:%d, nodelvlref:%d nodes:%d\n", nodelvl, nodelvlref, nodes);
         // update CSV
 #define TEST_NAME "BFS"
 #define RESULTS_FILE "prim_results.csv"

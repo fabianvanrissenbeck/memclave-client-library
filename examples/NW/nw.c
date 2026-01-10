@@ -30,13 +30,24 @@
 #define DPU_BINARY "../nw"
 #endif
 
-typedef struct {
-    uint32_t magic, nblocks, active_blocks, penalty;
-} dbg_t;
+typedef struct __attribute__((aligned(8))) {
+    uint32_t cmd;      // CMD_RUN / CMD_EXIT / ...
+    uint32_t job_id;   // monotonically increasing
+    uint32_t status;   // optional: ST_WAITING, etc.
+    uint32_t _pad;
+} ctrl_t;
+
+#define CMD_IDLE 0
+#define CMD_RUN  1
+#define CMD_EXIT 2
+#define ST_WAITING 0
+#define ST_RUNNING 1
+#define ST_DONE    2
+#define ST_EXITED  3
 
 // Keep consistent with other ports (SpMV)
 #define ARG_OFFSET  0x4000u
-#define DBG_OFFSET  (ARG_OFFSET + 0x40u)
+#define CTRL_OFFSET  (ARG_OFFSET + 0x40u)
 #define HEAP_BASE   (ARG_OFFSET + 0x100u)   // 256B after args (ALIGN256(sizeof(dpu_arguments_t)))
 
 // ----------------------------------------------------------------------------
@@ -103,12 +114,6 @@ static inline vud_mram_size vud_size_from_bytes(uint32_t nbytes) {
 static inline uint32_t umin_u32(uint32_t a, uint32_t b) { return (a < b) ? a : b; }
 static inline uint32_t divceil_u32(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
-// ----------------------------------------------------------------------------
-// Robust scatter/gather helpers:
-// - Take byte addresses/sizes (like the rest of the code)
-// - Convert to whatever the VUD wrapper expects (bytes vs qwords)
-// - Bounce through an aligned buffer if any pointer is not 8B aligned
-// ----------------------------------------------------------------------------
 #define VUD_MAX_XFER_BYTES 128u  // must be >= any single transfer size (we use 64/8/sizeof(args)/sizeof(dbg))
 
 static uint64_t *g_bounce_scatter = NULL;
@@ -212,6 +217,23 @@ static void vud_gather_bytes(vud_rank *r,
     for (uint32_t i = 0; i < NR_DPUS; i++) {
         memcpy(dst_ptrs[i], (const void *)ptrs[i], nbytes);
     }
+}
+
+static void push_ctrl_array(vud_rank *r, const ctrl_t *ctrl, uint32_t nr_of_dpus) {
+    const vud_mram_size words = (vud_mram_size)((sizeof(ctrl_t) + 7u) / 8u); // =2
+    _Alignas(8) uint64_t staged[NR_DPUS][2];
+    assert(nr_of_dpus <= NR_DPUS && words <= 2);
+
+    for (uint32_t i = 0; i < nr_of_dpus; ++i) {
+        memset(staged[i], 0, words * 8u);
+        memcpy(staged[i], &ctrl[i], sizeof(ctrl_t));
+    }
+
+    const uint64_t *lanes[NR_DPUS];
+    for (uint32_t i = 0; i < nr_of_dpus; ++i) lanes[i] = staged[i];
+    for (uint32_t i = nr_of_dpus; i < NR_DPUS; ++i) lanes[i] = staged[0]; // harmless fill
+
+    vud_simple_transfer(r, words, (const uint64_t (*)[NR_DPUS])&lanes, CTRL_OFFSET);
 }
 
 // Traceback in the host
@@ -363,10 +385,7 @@ int main(int argc, char **argv) {
 
     // Compile-time layout sanity
     _Static_assert((ARG_OFFSET & 7u) == 0, "ARG_OFFSET must be 8B aligned");
-    _Static_assert((DBG_OFFSET & 7u) == 0, "DBG_OFFSET must be 8B aligned");
     _Static_assert((HEAP_BASE  & 7u) == 0, "HEAP_BASE must be 8B aligned");
-    _Static_assert((sizeof(dbg_t) % 8) == 0, "dbg_t must be multiple of 8B");
-    _Static_assert(sizeof(dpu_arguments_t) <= 0x40, "dpu_arguments_t must fit before DBG_OFFSET");
 
     // VUD rank + load subkernel
     vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
@@ -415,16 +434,6 @@ int main(int argc, char **argv) {
         return -1;
     }
     memset(dummy, 0, (BL + 2) * sizeof(int32_t));
-
-    // Reusable DBG buffers (avoid leaks)
-    dbg_t *dbg = NULL;
-    if (posix_memalign((void **)&dbg, 8, NR_DPUS * sizeof(dbg_t)) != 0 || !dbg) {
-        fprintf(stderr, "posix_memalign dbg failed\n");
-        return -1;
-    }
-    memset(dbg, 0, NR_DPUS * sizeof(dbg_t));
-    void *dbg_ptrs[NR_DPUS];
-    for (uint32_t i = 0; i < NR_DPUS; i++) dbg_ptrs[i] = &dbg[i];
 
     // Timer
     Timer timer;
@@ -495,6 +504,24 @@ int main(int argc, char **argv) {
         if (rep >= p.n_warmup)
             stop(&timer, 0);
 
+	int launched = 0;
+	ctrl_t ctrl[NR_DPUS];
+        for (int i = 0; i < NR_DPUS; i++) {
+                    ctrl[i].cmd = CMD_RUN;
+                    ctrl[i].job_id = launched+1;
+                    ctrl[i].status = ST_WAITING;
+                    ctrl[i]._pad = 0;
+        }
+        push_ctrl_array(&r, ctrl, NR_DPUS);
+        if (r.err) {
+            fprintf(stderr, "ctrl transfer failed: %s\n", vud_error_str(r.err));
+            return EXIT_FAILURE;
+        }
+        vud_ime_launch(&r);
+        if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return -1; }
+	vud_ime_wait(&r);
+        if (r.err) { fprintf(stderr, "vud_ime_wait failed\n"); return -1; }
+	launched = 1;
         // -------------------------
         // Top-left computation on DPUs
         // -------------------------
@@ -536,14 +563,6 @@ int main(int argc, char **argv) {
                 // Ensure size is multiple of 8 for our transfer path
                 assert((sizeof(dpu_arguments_t) & 7u) == 0);
                 vud_scatter_bytes(&r, arg_ptrs, ARG_OFFSET, (uint32_t)sizeof(dpu_arguments_t));
-            }
-
-            // Clear DBG region (avoid stale reads)
-            {
-                dbg_t z = {0};
-                const void *z_ptrs[NR_DPUS];
-                for (uint32_t i = 0; i < NR_DPUS; i++) z_ptrs[i] = &z;
-                vud_scatter_bytes(&r, z_ptrs, DBG_OFFSET, (uint32_t)sizeof(dbg_t));
             }
 
             // blocks_per_dpu for transfers (ceil)
@@ -711,6 +730,7 @@ int main(int argc, char **argv) {
                 }
             }
 
+
             // Launch kernel on DPUs
             if (rep >= p.n_warmup) {
                 start(&timer, 3, rep - p.n_warmup + blk - 1);
@@ -719,9 +739,14 @@ int main(int argc, char **argv) {
                 }
             }
 
-            vud_ime_launch(&r);
-            if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return -1; }
-            vud_ime_wait(&r);
+	    if (!launched) {
+                vud_ime_launch(&r);
+                if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return -1; }
+	    } else {
+	        vud_rank_rel_mux(&r);
+    		if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed\n"); return -1; }
+	    }
+	    vud_ime_wait(&r);
             if (r.err) { fprintf(stderr, "vud_ime_wait failed %d\n", r.err); return -1; }
 
             if (rep >= p.n_warmup) {
@@ -730,16 +755,6 @@ int main(int argc, char **argv) {
                     stop(&long_diagonal_timer, 3);
                 }
             }
-
-#if 0
-            // Read back DPU dbg (optional but useful)
-            memset(dbg, 0, NR_DPUS * sizeof(dbg_t));
-            vud_gather_bytes(&r, DBG_OFFSET, dbg_ptrs, (uint32_t)sizeof(dbg_t));
-            for (int i = 0; i < 2; i++) {
-                printf("[DPU dbg] first launch dpu%02d magic=%08x nblocks=%u active=%u pen=%u\n",
-                       i, dbg[i].magic, dbg[i].nblocks, dbg[i].active_blocks, dbg[i].penalty);
-            }
-#endif
 
             // Retrieve results
             if (rep >= p.n_warmup) {
@@ -883,14 +898,6 @@ int main(int argc, char **argv) {
                 vud_scatter_bytes(&r, arg_ptrs, ARG_OFFSET, (uint32_t)sizeof(dpu_arguments_t));
             }
 
-            // Clear DBG
-            {
-                dbg_t z = {0};
-                const void *z_ptrs[NR_DPUS];
-                for (uint32_t i = 0; i < NR_DPUS; i++) z_ptrs[i] = &z;
-                vud_scatter_bytes(&r, z_ptrs, DBG_OFFSET, (uint32_t)sizeof(dbg_t));
-            }
-
             if (rep >= p.n_warmup)
                 start(&timer, 1, rep - p.n_warmup + blk - 1);
 
@@ -1030,22 +1037,18 @@ int main(int argc, char **argv) {
             if (rep >= p.n_warmup)
                 start(&timer, 3, rep - p.n_warmup + blk - 1);
 
-            vud_ime_launch(&r);
-            if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return -1; }
+	    if (!launched) {
+                vud_ime_launch(&r);
+                if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return -1; }
+	    } else {
+	        vud_rank_rel_mux(&r);
+    		if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed\n"); return -1; }
+	    }
             vud_ime_wait(&r);
             if (r.err) { fprintf(stderr, "vud_ime_wait failed %d\n", r.err); return -1; }
 
             if (rep >= p.n_warmup)
                 stop(&timer, 3);
-
-#if 0
-            memset(dbg, 0, NR_DPUS * sizeof(dbg_t));
-            vud_gather_bytes(&r, DBG_OFFSET, dbg_ptrs, (uint32_t)sizeof(dbg_t));
-            for (int i = 0; i < 2; i++) {
-                printf("[DPU dbg] second launch dpu%02d magic=%08x nblocks=%u active=%u pen=%u\n",
-                       i, dbg[i].magic, dbg[i].nblocks, dbg[i].active_blocks, dbg[i].penalty);
-            }
-#endif
 
             // Retrieve results
             if (rep >= p.n_warmup)
@@ -1133,8 +1136,22 @@ int main(int argc, char **argv) {
             if (rep >= p.n_warmup)
                 stop(&timer, 4);
         }
+        for (int i = 0; i < NR_DPUS; i++) {
+                    ctrl[i].cmd = CMD_EXIT;
+                    ctrl[i].job_id = launched+1;
+                    ctrl[i].status = ST_WAITING;
+                    ctrl[i]._pad = 0;
+        }
+        push_ctrl_array(&r, ctrl, NR_DPUS);
+        if (r.err) {
+            fprintf(stderr, "ctrl transfer failed: %s\n", vud_error_str(r.err));
+            return EXIT_FAILURE;
+        }
+	vud_rank_rel_mux(&r);
+    	if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed\n"); return -1; }
+        vud_ime_wait(&r);
+        if (r.err) { fprintf(stderr, "vud_ime_wait failed %d\n", r.err); return -1; }
 
-        // Traceback step (inter-DPU stage in PRIM)
         if (rep >= p.n_warmup)
             start(&timer, 1, 1);
 
@@ -1180,8 +1197,6 @@ int main(int argc, char **argv) {
     update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "M_C2D");
     update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 4, p.n_reps, "M_D2C");
     update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 3, p.n_reps, "DPU");
-    //double dpu_ms = prim_timer_ms_avg(&timer, 2, p.n_reps) + prim_timer_ms_avg(&timer, 3, p.n_reps);
-    //update_csv(RESULTS_FILE, TEST_NAME, "DPU", dpu_ms);
 
     // Check output
     bool status = true;
@@ -1200,9 +1215,9 @@ int main(int argc, char **argv) {
     }
 
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
 
     free(input_itemsets_host);
@@ -1212,7 +1227,6 @@ int main(int argc, char **argv) {
     free(traceback_output_host);
     free(input_args);
     free(dummy);
-    free(dbg);
 
     free(g_bounce_scatter);
     free(g_bounce_gather);

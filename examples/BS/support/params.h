@@ -26,9 +26,9 @@ void usage() {
   struct Params input_params(int argc, char **argv) {
     struct Params p;
     //p.num_querys    = PROBLEM_SIZE;
-    p.num_querys    = 2;
-    p.n_warmup      = 0;
-    p.n_reps        = 1;
+    p.num_querys    = 1048576;
+    p.n_warmup      = 1;
+    p.n_reps        = 2;
 
     int opt;
     while((opt = getopt(argc, argv, "h:i:w:e:")) >= 0) {

@@ -233,7 +233,6 @@ int main(int argc, char **argv) {
             }
         }
 #endif
-            /* Reset done[] in MRAM (M_*n bytes per DPU) */
             memset(done_host, 0, (size_t)M_ * n);
             {
                 const vud_mram_size words_done = (vud_mram_size)(((size_t)M_ * n + 7) / 8);
@@ -324,13 +323,8 @@ int main(int argc, char **argv) {
             if(rep >= p.n_warmup)
                 stop(&timer, 4);
 
-            //if(first_round){
-            //    first_round = 0;
-            //}
             timer_fix++;
         }
-        //DPU_ASSERT(dpu_free(dpu_set));
-
     }
 
     // Print timing results
@@ -371,9 +365,9 @@ int main(int argc, char **argv) {
         }
     }
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
 
     // Deallocation

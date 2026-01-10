@@ -25,7 +25,6 @@
 #include "support/params.h"
 #include "support/prim_results.h"
 
-// Define the DPU Binary path as DPU_BINARY here
 #ifndef DPU_BINARY
 #define DPU_BINARY "../scanssa"
 #endif
@@ -356,9 +355,9 @@ int main(int argc, char **argv) {
         }
     }
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
 
     // Deallocation

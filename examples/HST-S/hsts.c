@@ -24,7 +24,6 @@
 #include "support/params.h"
 #include "support/prim_results.h"
 
-// Define the DPU Binary path as DPU_BINARY here
 #ifndef DPU_BINARY
 #define DPU_BINARY "../hsts"
 #endif
@@ -39,7 +38,6 @@
 #define ARG_SIZE     ((uint32_t)sizeof(dpu_arguments_t))
 #define A_OFFSET     (ARG_OFFSET + ((ARG_SIZE + 0xFFu) & ~0xFFu))
 
-// Pointer declaration
 static T* A;
 static unsigned int* histo_host;
 static unsigned int* histo;
@@ -96,8 +94,7 @@ static void push_args_array(vud_rank* r, dpu_arguments_t* args, uint32_t nr_of_d
     const vud_mram_size words = (vud_mram_size)((sizeof(dpu_arguments_t) + 7u) / 8u);
 
     // Stage each lane into an aligned u64 buffer of `words` words.
-    // Use static to avoid VLA on stack; adjust 1024 if your max DPUs differs.
-    _Alignas(8) uint64_t staged[1024][4];  // 4 covers up to 32B struct; grow if needed
+    _Alignas(8) uint64_t staged[1024][4];
     assert(nr_of_dpus <= 1024);
     assert(words <= 4);
 
@@ -106,7 +103,6 @@ static void push_args_array(vud_rank* r, dpu_arguments_t* args, uint32_t nr_of_d
         memcpy(staged[i], &args[i], sizeof(dpu_arguments_t));
     }
 
-    // Build lane pointer array with u64* (what the API expects)
     const uint64_t* lanes[NR_DPUS];
     for (uint32_t i = 0; i < nr_of_dpus; ++i) lanes[i] = staged[i];
     for (uint32_t i = nr_of_dpus; i < NR_DPUS; ++i) lanes[i] = staged[0];  // pad
@@ -168,19 +164,14 @@ int main(int argc, char **argv) {
     else
         input_size = p.input_size * dpu_s; // Size of input image
 
-    //const unsigned int input_size_8bytes = ((input_size * sizeof(T)) % 8) != 0 ? roundup(input_size, 8) : input_size; // Input size per DPU (max.), 8-byte aligned
     const unsigned int input_size_dpu = divceil(input_size, nr_of_dpus); // Input size per DPU (max.)
-    //const unsigned int input_size_dpu_8bytes = ((input_size_dpu * sizeof(T)) % 8) != 0 ? roundup(input_size_dpu, 8) : input_size_dpu; // Input size per DPU (max.), 8-byte aligned
     const unsigned int elem_per_8B = (8u / (unsigned)sizeof(T));
-const unsigned int input_size_8bytes =
-    (((size_t)input_size * sizeof(T)) % 8u) ? roundup(input_size, elem_per_8B) : input_size;
-const unsigned int input_size_dpu_8bytes =
-    (((size_t)input_size_dpu * sizeof(T)) % 8u) ? roundup(input_size_dpu, elem_per_8B) : input_size_dpu;
+    const unsigned int input_size_8bytes = (((size_t)input_size * sizeof(T)) % 8u) ? roundup(input_size, elem_per_8B) : input_size;
+    const unsigned int input_size_dpu_8bytes = (((size_t)input_size_dpu * sizeof(T)) % 8u) ? roundup(input_size_dpu, elem_per_8B) : input_size_dpu;
 
 
     // Input/output allocation
     A = malloc(input_size_dpu_8bytes * nr_of_dpus * sizeof(T));
-    //T *bufferA = A;
     histo_host = malloc(p.bins * sizeof(unsigned int));
     histo = malloc(nr_of_dpus * p.bins * sizeof(unsigned int));
 
@@ -211,9 +202,8 @@ const unsigned int input_size_dpu_8bytes =
         if (end > input_size) end = input_size;
         unsigned int elems_i = (beg < input_size) ? (end - beg) : 0;
 
-        // Store bytes for kernel convenience (fits the original PRIM semantics where size/transfer_size are bytes)
+        // Store bytes for kernel convenience
         input_arguments[i].size = elems_i * sizeof(T);
-        // Not strictly needed for VUD uniform transfers, but kept for compatibility with your subkernel
         input_arguments[i].transfer_size = input_size_dpu_8bytes * sizeof(T);
         input_arguments[i].bins = p.bins;
         input_arguments[i].kernel = 0; // HST-S has one kernel
@@ -327,7 +317,6 @@ const unsigned int input_size_dpu_8bytes =
             stop(&timer, 3);
 
     }
-    // After vud_simple_gather and the memcpy() that fills histo[i * bins ...]
     {
     // Optional sanity: per-DPU sum check before merge
     const uint64_t expected = (uint64_t)input_arguments[0].size / sizeof(T);
@@ -407,43 +396,10 @@ const unsigned int input_size_dpu_8bytes =
             }
         }
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
-
-#if 0
-    {
-    int nb = (int)nr_of_dpus;              // NOT NR_DPUS if that’s just the cap
-    #define LANES 64
-    #define WORDS_PER_DPU 8  // we read 1 x 8B per DPU
-    
-    uint64_t logs[LANES * WORDS_PER_DPU];
-    uint64_t* ptrs[LANES];
-    for (int d = 0; d < nr_of_dpus; ++d) {
-        ptrs[d] = &logs[d*WORDS_PER_DPU];
-    }
-    vud_simple_gather(&r, WORDS_PER_DPU, SK_LOG_OFFSET, &ptrs);
-    uint64_t max_cycles = 0;
-    uint64_t magic;
-    uint64_t bins;
-    uint64_t size;
-    uint64_t transfer_size = 0;
-    uint64_t count_sum = 0;
-    uint64_t histo_dpu[3];
-    for (int d = 0; d < nb; ++d) {
-        magic = logs[d * WORDS_PER_DPU + 0];
-        bins = logs[d * WORDS_PER_DPU + 1];
-        size  = logs[d * WORDS_PER_DPU + 2];
-        transfer_size  = logs[d * WORDS_PER_DPU + 3];
-        count_sum  = logs[d * WORDS_PER_DPU + 4];
-        histo_dpu[0]  = logs[d * WORDS_PER_DPU + 1];
-        histo_dpu[1]  = logs[d * WORDS_PER_DPU + 2];
-        histo_dpu[2]  = logs[d * WORDS_PER_DPU + 3];
-        printf("DPU[%d] magic:%llu bins:%llu size:%llu transfer_size:%llu count_sum:%llu histo_dpu: [%llu, %llu, %llu]\n", d, magic, bins, size, transfer_size, count_sum, histo_dpu[0], histo_dpu[1], histo_dpu[2]);
-    }
-    }
-#endif
 
     // Deallocation
     free(A);

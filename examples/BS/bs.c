@@ -28,7 +28,7 @@
 
 #include "support/params.h"
 #include "support/timer.h"
-#include "support/common.h"   // DTYPE, INPUT_SIZE, dpu_arguments_t
+#include "support/common.h"
 #include "support/prim_results.h"
 
 #ifndef DPU_BINARY
@@ -78,7 +78,7 @@ int64_t binarySearch(DTYPE * input, DTYPE * querys, DTYPE input_size, uint64_t n
 			r = m - 1;
 		}
 	}
-	printf("CPU search: querys:%d, input_size%d, input:[%d, %d, %d]\n", num_querys, input_size, input[0], input[1], input[2]);
+	//printf("CPU search: querys:%d, input_size%d, input:[%d, %d, %d]\n", num_querys, input_size, input[0], input[1], input[2]);
 	return result;
 }
 
@@ -138,6 +138,7 @@ int main(int argc, char **argv) {
         const uint64_t gran = (uint64_t)nr_of_dpus * NR_TASKLETS;
         if (num_querys % gran) num_querys += (gran - (num_querys % gran));
         assert((num_querys % gran) == 0 && "num_querys divisibility");
+	printf("num_querys:%d\n", num_querys);
 
 	DTYPE * input  = malloc((input_size) * sizeof(DTYPE));
 	DTYPE * querys = malloc((num_querys) * sizeof(DTYPE));
@@ -152,7 +153,7 @@ int main(int argc, char **argv) {
 
 	// Create kernel arguments
 	uint64_t slice_per_dpu          = num_querys / nr_of_dpus;
-	printf("slice_per_dpu:%d\n", slice_per_dpu);
+	//printf("slice_per_dpu:%d\n", slice_per_dpu);
 	int64_t result_dpu;
 
 	for (unsigned int rep = 0; rep < p.n_warmup + p.n_reps; rep++) {
@@ -208,9 +209,6 @@ int main(int argc, char **argv) {
 		}
 
                 vud_ime_launch(&r);
-		for (int i = 0; i <=10000000; i++) {
-			int k = i + 2;
-		}
                 if (r.err) { 
 			fprintf(stderr, "launch failed: %s\n", vud_error_str(r.err)); 
 			return EXIT_FAILURE; 
@@ -274,13 +272,13 @@ int main(int argc, char **argv) {
 	printf("DPU-CPU Time (ms): ");
 	print(&timer, 3, p.n_reps);
 
-    // update CSV
+        // update CSV
 #define TEST_NAME "BS"
 #define RESULTS_FILE "prim_results.csv"
-    //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
-    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
-    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 3, p.n_reps, "M_D2C");
-    update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
+        //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+        update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
+        update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 3, p.n_reps, "M_D2C");
+        update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
 
 	#if ENERGY
 	double energy;
@@ -288,33 +286,12 @@ int main(int argc, char **argv) {
 	printf("DPU Energy (J): %f\t", energy * num_iterations);
 	#endif
 
-	printf("result_dpu:%d, result_host:%d\n", result_dpu, result_host);
 	int status = (result_dpu == result_host);
 	if (status) {
-		printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] results are equal\n");
+		printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] results are equal\n");
 	} else {
-		printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] results differ!\n");
+		printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] results differ!\n");
 	}
-	//uint64_t sklog[NR_DPUS][8];
-        {
-            #define LANES 64
-            #define WORDS_PER_DPU 8  // we read 1 x 8B per DPU
-            int nb = (int)nr_of_dpus;              // NOT NR_DPUS if that’s just the cap
-            
-            uint64_t sklog[LANES * WORDS_PER_DPU];
-            uint64_t* ptrs[LANES];
-            for (int d = 0; d < nr_of_dpus; ++d) {
-                ptrs[d] = &sklog[d*WORDS_PER_DPU];
-            }
-            vud_simple_gather(&r, WORDS_PER_DPU, SK_LOG_OFFSET, &ptrs);
-	/*for (int i = 0; i < 5; i++) {
-		int idx = i * WORDS_PER_DPU;
-		printf("DPU[%d]: [0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x]\n", 
-			i, sklog[idx+0], sklog[idx+1], sklog[idx+2], sklog[idx+3], 
-			sklog[idx+4], sklog[idx+5], sklog[idx+6], sklog[idx+7]);
-	}*/
-        }
-
 
 	free(input);
 	vud_rank_free(&r);

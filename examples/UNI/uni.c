@@ -25,12 +25,11 @@
 #include "support/params.h"
 #include "support/prim_results.h"
 
-// ---- DPU image ----
 #ifndef DPU_BINARY
 #define DPU_BINARY "../uni"
 #endif
 
-// ---- MRAM layout ----
+// MRAM layout
 #ifndef ARG_OFFSET
 #define ARG_OFFSET   0x2000u
 #endif
@@ -151,14 +150,13 @@ int main(int argc, char **argv) {
     // Loop over main kernel
     for(int rep = 0; rep < p.n_warmup + p.n_reps; rep++) {
 
-        // Compute output on CPU (performance comparison and verification purposes)
+        // Compute output on CPU
         if(rep >= p.n_warmup)
             start(&timer, 0, rep - p.n_warmup);
         total_count = unique_host(C, A, input_size);
         if(rep >= p.n_warmup)
             stop(&timer, 0);
 
-        printf("Load input data\n");
         if(rep >= p.n_warmup)
             start(&timer, 1, rep - p.n_warmup);
         // Input arguments
@@ -182,7 +180,6 @@ int main(int argc, char **argv) {
         if(rep >= p.n_warmup)
             stop(&timer, 1);
 
-        printf("Run program on DPU(s) \n");
         // Run DPU kernel
         if(rep >= p.n_warmup) {
             start(&timer, 2, rep - p.n_warmup);
@@ -222,7 +219,6 @@ int main(int argc, char **argv) {
         }
 #endif
 
-        printf("Retrieve results\n");
         dpu_results_t results[nr_of_dpus];
         uint32_t* results_scan = malloc(nr_of_dpus * sizeof(uint32_t));
         uint32_t* offset = calloc(nr_of_dpus, sizeof(uint32_t));
@@ -238,13 +234,12 @@ int main(int argc, char **argv) {
             uint64_t *ptrs[NR_DPUS];
             for (uint32_t d = 0; d < nr_of_dpus; ++d) ptrs[d] = &per_dpu_counts_64[d];
             for (uint32_t d = nr_of_dpus; d < NR_DPUS; ++d) ptrs[d] = ptrs[0];
-            vud_simple_gather(&r, /*words=*/1, /*offset=*/SK_LOG_OFFSET, &ptrs);
+            vud_simple_gather(&r, 1, SK_LOG_OFFSET, &ptrs);
             if (r.err) { fprintf(stderr, "gather counts failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
         }
         // Convert + exclusive scan for global placement
         T per_dpu_counts[NR_DPUS];
         T per_dpu_offsets[NR_DPUS];
-        //T acc = 0;
         for (uint32_t d = 0; d < nr_of_dpus; ++d) {
             per_dpu_counts[d] = (T)per_dpu_counts_64[d];
             per_dpu_offsets[d] = acc;
@@ -317,8 +312,7 @@ int main(int argc, char **argv) {
 
     // update CSV
 #define TEST_NAME "UNI"
-#define RESULTS_FILE "../prim_results.csv"
-    //update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 0, p.n_reps, "CPU");
+#define RESULTS_FILE "prim_results.csv"
     update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 1, p.n_reps, "M_C2D");
     update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 4, p.n_reps, "M_D2C");
     update_csv_from_timer(RESULTS_FILE, TEST_NAME, &timer, 2, p.n_reps, "DPU");
@@ -332,7 +326,7 @@ int main(int argc, char **argv) {
     // Check output
     bool status = true;
     if(acc != total_count) status = false;
-    printf("acc %u, total_count %u\n", acc, total_count);
+    //printf("acc %u, total_count %u\n", acc, total_count);
     for (i = 0; i < acc; i++) {
         if(C[i] != bufferC[i]){ 
             status = false;
@@ -342,9 +336,9 @@ int main(int argc, char **argv) {
         }
     }
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
 
     // Deallocation

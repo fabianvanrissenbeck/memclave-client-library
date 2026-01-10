@@ -282,27 +282,6 @@ int main(int argc, char** argv) {
         vud_ime_wait(&r);
         if (r.err) { fprintf(stderr, "post-rel-mux wait failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
-        /* print DPU cycle max (optional, but useful like VA) */
-        {
-            uint64_t logbuf[NR_DPUS][LOG_WORDS];
-            uint64_t* lanes[NR_DPUS];
-            for (uint32_t d = 0; d < nr_of_dpus; ++d) lanes[d] = logbuf[d];
-            for (uint32_t d = nr_of_dpus; d < NR_DPUS; ++d) lanes[d] = logbuf[0];
-
-            vud_simple_gather(&r, (vud_mram_size)LOG_WORDS, (vud_mram_addr)SK_LOG_OFFSET,
-                              (uint64_t* (*)[NR_DPUS])&lanes);
-            if (r.err) { fprintf(stderr, "gather log failed: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
-
-            uint64_t max_cycles = 0;
-            for (uint32_t d = 0; d < nr_of_dpus; ++d) {
-                if (logbuf[d][0] == LOG_MAGIC && logbuf[d][7] == 1ULL) {
-                    if (logbuf[d][1] > max_cycles) max_cycles = logbuf[d][1];
-                }
-            }
-            printf("DPU cycles (whole-kernel, max over DPUs): %llu\n",
-                   (unsigned long long)max_cycles);
-        }
-
         /* retrieve results */
         if (rep >= p.n_warmup) start(&timer, 3, rep - p.n_warmup);
         {
@@ -369,8 +348,8 @@ int main(int argc, char** argv) {
         if (!status) break;
     }
 
-    if (status) printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
-    else        printf("[" ANSI_COLOR_RED   "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+    if (status) printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+    else        printf("\n[" ANSI_COLOR_RED   "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
 
 	// Deallocation
 	free(A);

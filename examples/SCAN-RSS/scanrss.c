@@ -235,11 +235,6 @@ int main(int argc, char **argv) {
 #endif
 
         printf("Retrieve results\n");
-        //dpu_results_t results[nr_of_dpus];
-        //T* results_scan = malloc(nr_of_dpus * sizeof(T));
-        //i = 0;
-        //accum = 0;
-		
         if(rep >= p.n_warmup)
             start(&timer, 3, rep - p.n_warmup);
         uint64_t per_dpu_totals[NR_DPUS];
@@ -331,8 +326,6 @@ int main(int argc, char **argv) {
         if(rep >= p.n_warmup)
             stop(&timer, 5);
 
-        // Free memory
-        //free(results_scan);
     }
 
     // Print timing results
@@ -376,9 +369,9 @@ int main(int argc, char **argv) {
         }
     }
     if (status) {
-        printf("[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
+        printf("\n[" ANSI_COLOR_GREEN "OK" ANSI_COLOR_RESET "] Outputs are equal\n");
     } else {
-        printf("[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
+        printf("\n[" ANSI_COLOR_RED "ERROR" ANSI_COLOR_RESET "] Outputs differ!\n");
     }
 
     // Deallocation
