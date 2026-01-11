@@ -6,7 +6,7 @@ set -euo pipefail
 # - log per test
 # - classify PASS/FAIL based on "OK" vs "ERROR" in output
 
-BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)/build"
 LOGDIR="$BUILD_DIR/logs/$(date +%Y%m%d_%H%M%S)"
 
 # Canonical test name -> binary
@@ -25,6 +25,8 @@ declare -A BIN=(
   ["TS"]="ime-ts-example"
   ["UNI"]="ime-uni-example"
   ["VA"]="ime-va-example"
+  ["SPMV"]="ime-spmv-example"
+  ["NW"]="ime-nw-example"
 )
 
 # A few friendly aliases
@@ -85,7 +87,7 @@ RUN_TESTS=()
 
 if [[ "${1:-}" == "all" || "${1:-}" == "ALL" ]]; then
   # fixed order (edit if you want)
-  RUN_TESTS=(BS TS TRNS RED HSTS HSTL SEL UNI SCANSSA SCANRSS GEMV MLP VA BFS)
+  RUN_TESTS=(BS TS TRNS RED HSTS HSTL SEL UNI SCANSSA SCANRSS GEMV MLP VA BFS SPMV NW)
 else
   for arg in "$@"; do
     # allow direct binary
@@ -159,4 +161,3 @@ if [[ "${#FAILED[@]}" -gt 0 ]]; then
   exit 1
 fi
 exit 0
-
