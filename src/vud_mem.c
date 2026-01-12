@@ -180,7 +180,7 @@ static void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src,
 
     invoc_memory_fence();
 
-    for (size_t i = id; i < sz; i += nr_worker) {
+    for (size_t i = 0; i < sz; i += 1) {
         vud_mram_addr addr = src + i * 8;
 
         for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
@@ -239,7 +239,7 @@ static void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src,
 
     invoc_memory_fence();
 
-    for (size_t i = id; i < sz; i += nr_worker) {
+    for (size_t i = 0; i < sz; i += 1) {
         vud_mram_addr addr = src + i * 8;
 
         for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
