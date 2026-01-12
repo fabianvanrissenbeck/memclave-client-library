@@ -24,7 +24,7 @@ static int gen_good_iv(uint8_t out[12]) {
     return 0;
 }
 
-long vud_sk_from_elf(const char* path, size_t sz, uint64_t* out) {
+long vud_sk_from_elf(const char* path, size_t sz, uint64_t* out, bool auth_only) {
     char cmd_text[240];
     char cmd_data[240];
 
@@ -69,7 +69,7 @@ long vud_sk_from_elf(const char* path, size_t sz, uint64_t* out) {
 
     sec_data = NULL;
 
-    uint32_t size_aad = 64;
+    uint32_t size_aad = 64 + (auth_only ? n_text + n_data : 0);
     uint32_t size = 64 + n_text + n_data;
 
     uint64_t header[8] = {

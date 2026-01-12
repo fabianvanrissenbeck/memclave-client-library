@@ -32,6 +32,13 @@ void vud_ime_launch_sk(vud_rank* r, const char* path);
 void vud_ime_load(vud_rank* r, const char* path);
 
 /**
+ * @brief set the next subkernel to load - do not encrypt; only authenticate
+ * @param r rank to change the next subkernel location off
+ * @param path path to a subkernel
+ */
+void vud_ime_load_auth_only(vud_rank* r, const char* path);
+
+/**
  * @brief load a subkernel (ELF file not .sk) on a rank of DPUs
  *
  * This function requires that a key has been installed on the rank.

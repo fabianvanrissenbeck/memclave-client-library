@@ -13,7 +13,7 @@ static uint64_t time_ms(void) {
     return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-int main(void) {
+static int perform_benchmark(bool auth_only) {
     vud_rank r = vud_rank_alloc(VUD_ALLOC_ANY);
 
     if (r.err) {
@@ -26,7 +26,11 @@ int main(void) {
         goto error;
     }
 
-    vud_ime_load(&r, "../sk-load-bench");
+    if (auth_only) {
+        vud_ime_load_auth_only(&r, "../sk-load-bench");
+    } else {
+        vud_ime_load(&r, "../sk-load-bench");
+    }
 
     if (r.err) {
         goto error;
@@ -75,10 +79,10 @@ int main(void) {
         goto error;
     }
 
-    printf("DPU,unload,auth,dec,scan\n");
+    printf("DPU,auth only,unload,auth,dec,scan\n");
 
     for (int i = 0; i < 64; i++) {
-        printf("%02o,%u,%u,%u,%u\n", i, buf[i][0], buf[i][1], buf[i][2], buf[i][3]);
+        printf("%02o,%s,%u,%u,%u,%u\n", i, auth_only ? "true" : "false", buf[i][0], buf[i][1], buf[i][2], buf[i][3]);
     }
 
     vud_rank_free(&r);
@@ -87,4 +91,12 @@ int main(void) {
 error:
     printf("cannot run benchmark: %s\n", vud_error_str(r.err));
     return EXIT_FAILURE;
+}
+
+int main(void) {
+    if (perform_benchmark(false) != 0) {
+        return EXIT_FAILURE;
+    }
+
+    return perform_benchmark(true);
 }

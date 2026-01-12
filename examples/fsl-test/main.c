@@ -12,7 +12,7 @@ int main(void) {
     uint64_t* buf = malloc(128 << 10);
     assert(buf != NULL);
 
-    long sz = vud_sk_from_elf("../add", 128 << 10, buf);
+    long sz = vud_sk_from_elf("../add", 128 << 10, buf, false);
 
     if (sz < 0) {
         puts("cannot load subkernel");

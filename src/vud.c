@@ -155,8 +155,10 @@ vud_rank vud_rank_alloc(int rank_nr) {
         .pool = pool,
     };
 
+#if 0
     vud_rank_nr_workers(&res, 12);
     touch_all_pages(&res);
+#endif
 
     return res;
 }

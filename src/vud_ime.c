@@ -147,14 +147,14 @@ void vud_ime_launch_default(vud_rank* r, vud_ime_default_kernel kernel) {
     vud_rank_rel_mux(r);
 }
 
-void vud_ime_load(vud_rank* r, const char* path) {
+static void intl_ime_load(vud_rank* r, const char* path, bool auth_only) {
     vud_check_launchable(r);
     if (r->err) { return; }
 
     uint64_t* sk_buf = calloc(1, 128 << 10);
     assert(sk_buf != NULL);
 
-    long sk_size = vud_sk_from_elf(path, 128 << 10, sk_buf);
+    long sk_size = vud_sk_from_elf(path, 128 << 10, sk_buf, auth_only);
 
     if (sk_size < 0) {
         r->err = VUD_SK_NOT_FOUND;
@@ -168,6 +168,14 @@ void vud_ime_load(vud_rank* r, const char* path) {
 
     vud_broadcast_transfer(r, sk_size / sizeof(uint64_t), (const uint64_t (*)[]) sk_buf, IME_LOAD_BUFFER);
     r->next_sk = path;
+}
+
+void vud_ime_load(vud_rank* r, const char* path) {
+    intl_ime_load(r, path, false);
+}
+
+void vud_ime_load_auth_only(vud_rank* r, const char* path) {
+    intl_ime_load(r, path, true);
 }
 
 void vud_ime_launch(vud_rank* r) {

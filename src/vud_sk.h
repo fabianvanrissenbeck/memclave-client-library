@@ -18,9 +18,10 @@
  * @param path path to load elf from
  * @param sz size of the output buffer
  * @param out location to write subkernel to
+ * @param auth_only set the headers up for an auth only subkernel
  * @return size of the subkernel on success or negative value on failure
  */
-long vud_sk_from_elf(const char* path, size_t sz, uint64_t* out);
+long vud_sk_from_elf(const char* path, size_t sz, uint64_t* out, bool auth_only);
 
 /**
  * @brief encrypt the passed in subkernel under key - leave only header as AD
