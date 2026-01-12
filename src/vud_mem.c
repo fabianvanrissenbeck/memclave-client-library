@@ -176,25 +176,36 @@ static void intl_simple_transfer(vud_rank* r, vud_mram_size sz, const uint64_t* 
 }
 
 static void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src, uint64_t* (*tgt)[64], unsigned id, unsigned nr_worker) {
-    // flush all relevant cache lines
-
-    invoc_memory_fence();
-
-    for (size_t i = 0; i < sz; i += 1) {
-        vud_mram_addr addr = src + i * 8;
-
-        for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
-            volatile uint64_t* line = line_for_group(r, addr, group_nr);
-            flush_cache_line(line);
-        }
-    }
-
-    invoc_memory_fence();
-
     // copy the first words so that src becomes 1024 word aligned
     // this makes the following copy slightly more efficient
 
     unsigned n_unaligned = (1024 - (src / 8) % 1024) % 1024;
+
+    // flush all relevant cache lines
+
+    invoc_memory_fence();
+
+    for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
+        for (size_t i = 0; i < sz && i < n_unaligned; ++i) {
+            vud_mram_addr addr = src + i * 8;
+            volatile uint64_t* line = line_for_group(r, addr, group_nr);
+
+            flush_cache_line(line);
+        }
+    }
+
+    for (size_t j = id * 1024; j < sz; j += 1024 * nr_worker) {
+        for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
+            for (size_t i = 0; i + j + n_unaligned < sz && i < 1024; ++i) {
+                vud_mram_addr addr = src + (i + j + n_unaligned) * 8;
+                volatile uint64_t* line = line_for_group(r, addr, group_nr);
+
+                flush_cache_line(line);
+            }
+        }
+    }
+
+    invoc_memory_fence();
 
     for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
         for (size_t i = 0; i < sz && i < n_unaligned; ++i) {
@@ -239,12 +250,23 @@ static void intl_simple_gather(vud_rank* r, vud_mram_size sz, vud_mram_addr src,
 
     invoc_memory_fence();
 
-    for (size_t i = 0; i < sz; i += 1) {
-        vud_mram_addr addr = src + i * 8;
-
-        for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
+    for (unsigned group_nr = id; group_nr < 8; group_nr += nr_worker) {
+        for (size_t i = 0; i < sz && i < n_unaligned; ++i) {
+            vud_mram_addr addr = src + i * 8;
             volatile uint64_t* line = line_for_group(r, addr, group_nr);
+
             flush_cache_line(line);
+        }
+    }
+
+    for (size_t j = id * 1024; j < sz; j += 1024 * nr_worker) {
+        for (unsigned group_nr = 0; group_nr < 8; ++group_nr) {
+            for (size_t i = 0; i + j + n_unaligned < sz && i < 1024; ++i) {
+                vud_mram_addr addr = src + (i + j + n_unaligned) * 8;
+                volatile uint64_t* line = line_for_group(r, addr, group_nr);
+
+                flush_cache_line(line);
+            }
         }
     }
 
