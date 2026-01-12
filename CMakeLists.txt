@@ -79,6 +79,9 @@ target_link_libraries(ime-nw-example PUBLIC ime-client-lib)
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
 
+add_executable(sk-load-bench examples/sk-load-bench/main.c)
+target_link_libraries(sk-load-bench PUBLIC ime-client-lib)
+
 add_executable(mram examples/mram/main.c)
 
 if (${ENABLE_UPMEM_BENCHMARK})
