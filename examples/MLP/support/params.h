@@ -30,14 +30,10 @@ struct Params input_params(int argc, char **argv) {
     struct Params p;
     p.m_size        = 163840;
     p.n_size        = 4096;
-    //p.m_size        = 4096;
-    //p.m_size        = 2048;
-    //p.n_size        = 2048;
     p.n_warmup      = 0;
     p.n_reps        = 1;
     p.batch_size    = 1;
 
-#if 0
     int opt;
     while((opt = getopt(argc, argv, "hm:n:w:e:")) >= 0) {
         switch(opt) {
@@ -56,7 +52,6 @@ struct Params input_params(int argc, char **argv) {
         }
     }
     assert(NR_DPUS > 0 && "Invalid # of dpus!");
-#endif
 
     return p;
 }

@@ -61,10 +61,10 @@ static void wait_for_fault(vud_rank* r) {
 
         usleep(timeout);
 
-        /* exponential back-off until a 25ms wait period */
+        /* exponential back-off until a 2.5ms wait period */
         if (timeout == 0) {
             timeout = 1;
-        } else if (timeout < 25000) {
+        } else if (timeout < 2500) {
             timeout = timeout << 1;
         }
     } while (n_faulted != 64);

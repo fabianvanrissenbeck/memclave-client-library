@@ -170,7 +170,7 @@ int main(int argc, char **argv) {
     vud_ime_load(&r, DPU_BINARY);
     if (r.err) { fprintf(stderr, "cannot load subkernel: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
-    vud_rank_nr_workers(&r, 8);
+    vud_rank_nr_workers(&r, 12);
     if (r.err) { fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
     uint8_t key[32];

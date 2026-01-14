@@ -41,6 +41,22 @@
 #define SK_LOG_SIZE_BYTES   64
 #define SK_LOG_OFFSET       (MRAM_SIZE_BYTES - SK_LOG_SIZE_BYTES)
 
+#define CTRL_OFFSET (ARG_OFFSET + 0x40u)
+
+typedef struct __attribute__((aligned(8))) {
+    uint32_t cmd;
+    uint32_t status;
+} ctrl_t;
+
+#define CMD_IDLE 0
+#define CMD_RUN  1
+#define CMD_EXIT 2
+#define ST_WAITING 0
+#define ST_RUNNING 1
+#define ST_DONE    2
+#define ST_EXITED  3
+
+
 #define ALIGN256(x)         (((x) + 0xFFu) & ~0xFFu)
 
 static inline double now_ms(void) {
@@ -85,6 +101,9 @@ int main(int argc, char** argv) {
 
     vud_ime_load(&r, DPU_BINARY);
     if (r.err) { fprintf(stderr, "cannot load subkernel\n"); return EXIT_FAILURE; }
+
+    //vud_rank_nr_workers(&r, 12);
+    //if (r.err) { fprintf(stderr, "cannot start worker threads: %s\n", vud_error_str(r.err)); return EXIT_FAILURE; }
 
     PRINT_INFO(p.verbosity >= 1, "Allocated %u DPU(s)", numDPUs);
 
@@ -254,19 +273,37 @@ int main(int argc, char** argv) {
     // BFS loop
     uint32_t nextFrontierEmpty = 0;
     const uint32_t numTiles = numNodes / 64;
+    const size_t frontierBytes = (size_t)numTiles * sizeof(uint64_t);
+    uint8_t* allFrontiers = (uint8_t*)malloc((size_t)numDPUs * frontierBytes);
+    if (!allFrontiers) { fprintf(stderr, "malloc(allFrontiers) failed\n"); exit(1); }
+
+    void* frontier_ptrs[NR_DPUS];
+    for (unsigned d = 0; d < numDPUs; ++d)
+        frontier_ptrs[d] = allFrontiers + (size_t)d * frontierBytes;
+
+    uint32_t job_id = 1;
+    ctrl_t ctrl;
+    ctrl.cmd = CMD_RUN; ctrl.status = ST_WAITING;
+    copyToDPU(&r, &ctrl, CTRL_OFFSET, sizeof(ctrl));
+    // Launch kernel
+    startTimer(&timer);
+    vud_ime_launch(&r);
+    if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return EXIT_FAILURE; }
+    vud_ime_wait(&r);
+    if (r.err) { fprintf(stderr, "vud_ime_wait failed %d\n", r.err); return EXIT_FAILURE; }
+    stopTimer(&timer);
+    dpuTime += getElapsedTime(timer);
 
     while (!nextFrontierEmpty) {
 
         PRINT_INFO(p.verbosity >= 1, "Processing current frontier for level %u (distance %u)", level, level - 1);
 
         // Launch kernel
-        //double l0 = now_ms();
 	startTimer(&timer);
-        vud_ime_launch(&r);
-        if (r.err) { fprintf(stderr, "vud_ime_launch failed %d\n", r.err); return EXIT_FAILURE; }
+	vud_rank_rel_mux(&r);
+        if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed %d\n", r.err); return EXIT_FAILURE; }
         vud_ime_wait(&r);
         if (r.err) { fprintf(stderr, "vud_ime_wait failed %d\n", r.err); return EXIT_FAILURE; }
-        //double l1 = now_ms();
         stopTimer(&timer);
         dpuTime += getElapsedTime(timer);
         PRINT_INFO(p.verbosity >= 2, "    Level DPU Time: %f ms", getElapsedTime(timer)*1e3);
@@ -275,14 +312,6 @@ int main(int argc, char** argv) {
         startTimer(&timer);
 
         memset(currentFrontier, 0, (size_t)numTiles * sizeof(uint64_t));
-
-        const size_t frontierBytes = (size_t)numTiles * sizeof(uint64_t);
-        uint8_t* allFrontiers = (uint8_t*)malloc((size_t)numDPUs * frontierBytes);
-        if (!allFrontiers) { fprintf(stderr, "malloc(allFrontiers) failed\n"); exit(1); }
-
-        void* frontier_ptrs[NR_DPUS];
-        for (unsigned d = 0; d < numDPUs; ++d)
-            frontier_ptrs[d] = allFrontiers + (size_t)d * frontierBytes;
 
         gatherFromDPU(&r,
                       dpuNext_m,
@@ -293,8 +322,6 @@ int main(int argc, char** argv) {
             uint64_t* thisF = (uint64_t*)(allFrontiers + (size_t)d * frontierBytes);
             for (uint32_t t = 0; t < numTiles; ++t) currentFrontier[t] |= thisF[t];
         }
-
-        free(allFrontiers);
 
         // Check empty
         nextFrontierEmpty = 1;
@@ -324,6 +351,17 @@ int main(int argc, char** argv) {
         hostTime += getElapsedTime(timer);
         PRINT_INFO(p.verbosity >= 2, "    Level Inter-DPU Time: %f ms", getElapsedTime(timer) * 1e3);
     }
+    free(allFrontiers);
+
+    // Tell DPUs to exit
+    ctrl.cmd = CMD_EXIT;
+    ctrl.status = ST_WAITING;
+    copyToDPU(&r, &ctrl, CTRL_OFFSET, sizeof(ctrl));
+
+    vud_rank_rel_mux(&r);
+    if (r.err) { fprintf(stderr, "vud_rank_rel_mux failed %d\n", r.err); return EXIT_FAILURE; }
+    vud_ime_wait(&r);
+    if (r.err) { fprintf(stderr, "vud_ime_wait failed %d\n", r.err); return EXIT_FAILURE; }
 
     PRINT_INFO(p.verbosity >= 1, "DPU Kernel Time: %f ms", dpuTime * 1e3);
     PRINT_INFO(p.verbosity >= 1, "Inter-DPU Time: %f ms", hostTime * 1e3);
@@ -358,7 +396,7 @@ int main(int argc, char** argv) {
               loadTime*1e3, dpuTime*1e3, hostTime*1e3, retrieveTime*1e3);
     }
 
-    // CPU reference + verify (kept same as PRIM)
+    // CPU reference + verify
     PRINT_INFO(p.verbosity >= 1, "Calculating result on CPU");
     uint32_t* nodeLevelReference = calloc(numNodes, sizeof(uint32_t));
     memset(nextFrontier, 0, (numNodes/64) * sizeof(uint64_t));
