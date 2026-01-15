@@ -76,6 +76,27 @@ target_link_libraries(ime-spmv-example PUBLIC ime-client-lib)
 add_executable(ime-nw-example examples/NW/nw.c)
 target_link_libraries(ime-nw-example PUBLIC ime-client-lib)
 
+add_custom_target(prim-benchmarks)
+
+add_dependencies(prim-benchmarks
+	ime-gemv-example
+	ime-mlp-example
+	ime-bfs-example
+	ime-va-example
+	ime-hsts-example
+	ime-hstl-example
+	ime-scanssa-example
+	ime-scanrss-example
+	ime-red-example
+	ime-trns-example
+	ime-sel-example
+	ime-uni-example
+	ime-bs-example
+	ime-ts-example
+	ime-spmv-example
+	ime-nw-example
+)
+
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
 
