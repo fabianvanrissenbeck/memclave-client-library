@@ -24,7 +24,7 @@ typedef struct Params {
 static struct Params input_params(int argc, char **argv) {
     struct Params p;
     //LiveJournal1,loc-gowalla,roadNet-PA
-    p.fileName      = "/home/fabian/artifact/ime-client-library/examples/BFS/data/LiveJournal1";
+    p.fileName      = "../data/LiveJournal1";
 
     p.verbosity     = 1;
     int opt;
