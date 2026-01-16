@@ -37,7 +37,7 @@ struct Params input_params(int argc, char **argv) {
     p.n_warmup      = 0;
     p.n_reps        = 1;
     p.exp           = 0;
-    p.file_name     = "/home/fabian/artifact/ime-client-library/examples/HST-S/input/image_VanHateren.iml";
+    p.file_name     = "../examples/HST-S/input/image_VanHateren.iml";
     p.dpu_s         = 64;
 
     int opt;
