@@ -1,6 +1,6 @@
 /**
 
-\mainpage The Memclave Client Library
+\page ime-client-lib-main The Memclave Client Library
 
 The Memclave Client Library is used to interact with PIM ranks running Memclave.
 It serves as a replacement to UPMEM's host library and follows a similar programming
