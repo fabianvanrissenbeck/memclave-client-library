@@ -26,6 +26,16 @@ static int perform_benchmark(bool auth_only) {
         goto error;
     }
 
+    uint64_t ready_line_start = time_ms();
+    vud_rank_rel_mux(&r);
+
+    printf("INFO: DPU Ready line took %lums.\n", time_ms() - ready_line_start);
+    vud_ime_wait(&r);
+
+    if (r.err) {
+        goto error;
+    }
+
     if (auth_only) {
         vud_ime_load_auth_only(&r, "../sk-load-bench");
     } else {
@@ -43,7 +53,7 @@ static int perform_benchmark(bool auth_only) {
         goto error;
     }
 
-    printf("Key Exchange took %lums.\n", time_ms() - install_key_start);
+    printf("INFO: Key Exchange took %lums.\n", time_ms() - install_key_start);
 
     vud_broadcast_to(&r, 8, &(uint64_t[8]) { 0 }, "__ime_debug_out");
 
@@ -64,7 +74,7 @@ static int perform_benchmark(bool auth_only) {
         goto error;
     }
 
-    printf("DPU finished in %lums.\n", time_ms() - launch_time);
+    printf("INFO: DPU finished in %lums.\n", time_ms() - launch_time);
 
     uint32_t buf[64][4];
     uint64_t* buf_ptr[64];
