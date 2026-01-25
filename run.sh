@@ -9,6 +9,20 @@ set -euo pipefail
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)/build"
 LOGDIR="$BUILD_DIR/logs/$(date +%Y%m%d_%H%M%S)"
 
+BFS_DATA_URL=https://zenodo.org/records/18307126/files/bfs-data.tar.zst
+
+if [ ! -f ./data/LiveJournal1 ];
+then
+	if [ ! -f ./bfs-data.tar.zst ];
+	then
+		echo "BFS Example Graphs are Missing. Downloading from Zenodo."
+		curl -o bfs-data.tar.zst $BFS_DATA_URL
+	fi
+
+	tar xf ./bfs-data.tar.zst --directory ./data/
+	exit 1;
+fi
+
 # Canonical test name -> binary
 declare -A BIN=(
   ["BFS"]="ime-bfs-example"
