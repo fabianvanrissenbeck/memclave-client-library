@@ -1,12 +1,11 @@
 #include <stdio.h>
+#include <unistd.h>
 #include <assert.h>
-#include <inttypes.h>
 
 #include "vud.h"
 #include "vud_ime.h"
 
-#define MIN_BLOCK_SIZE 6
-#define MAX_BLOCK_SIZE 24
+#define BLOCK_SIZE 24
 #define SUBKERNEL "../chacha-bench"
 
 static void random_key(uint8_t key[32]) {
@@ -18,60 +17,65 @@ static void random_key(uint8_t key[32]) {
     fclose(fp);
 }
 
+static void fetch_results_from(vud_rank* r) {
+    uint64_t out_time[64];
+    uint64_t* out_time_ptr[64];
+
+    for (int i = 0; i < 64; ++i) {
+        out_time_ptr[i] = &out_time[i];
+    }
+
+    vud_gather_from(r, 1, "out_time_enc", &out_time_ptr);
+
+    if (r->err) {
+        return;
+    }
+
+    for (int i = 0; i < 64; ++i) {
+        printf("%u,%zu,enc,%02o\n", 1 << BLOCK_SIZE, out_time[i], i);
+    }
+
+    vud_gather_from(r, 1, "out_time_dec", &out_time_ptr);
+
+    if (r->err) {
+        return;
+    }
+
+    for (int i = 0; i < 64; ++i) {
+        printf("%u,%zu,dec,%02o\n", 1 << BLOCK_SIZE, out_time[i], i);
+    }
+}
+
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        printf("Usage: crypto-bench <out scv>\n");
-        return 1;
-    }
-
-    FILE* fp = fopen(argv[1], "w");
-
-    if (fp == NULL) {
-        perror("cannot create output file");
-        return 1;
-    }
-
     uint8_t key[32];
     vud_rank rank = vud_rank_alloc(VUD_ALLOC_ANY);
 
     vud_ime_wait(&rank);
     vud_ime_load(&rank, SUBKERNEL);
+
+    if (rank.err) {
+        puts("cannot load subkernel");
+        goto fail;
+    }
+
+    vud_rank_nr_workers(&rank, 1);
+
     random_key(key);
     vud_ime_install_key(&rank, key, NULL, NULL);
+
+    if (rank.err) {
+        puts("cannot perform key exchange");
+        goto fail;
+    }
+
+    puts("Key Exchange Done");
+
     vud_ime_launch(&rank);
     vud_ime_wait(&rank);
 
-    if (rank.err) { goto fail; }
+    printf("size,cycles,type,dpu\n");
+    fetch_results_from(&rank);
 
-    uint64_t out_time_enc[64][MAX_BLOCK_SIZE - MIN_BLOCK_SIZE + 1];
-    uint64_t out_time_dec[64][MAX_BLOCK_SIZE - MIN_BLOCK_SIZE + 1];
-
-    uint64_t* ptr_time_enc[64];
-    uint64_t* ptr_time_dec[64];
-
-    for (int i = 0; i < 64; ++i) {
-        ptr_time_enc[i] = &out_time_enc[i][0];
-        ptr_time_dec[i] = &out_time_dec[i][0];
-    }
-
-    vud_gather_from(&rank, MAX_BLOCK_SIZE - MIN_BLOCK_SIZE + 1, "out_time_enc", &ptr_time_enc);
-    vud_gather_from(&rank, MAX_BLOCK_SIZE - MIN_BLOCK_SIZE + 1, "out_time_dec", &ptr_time_dec);
-
-    if (rank.err) { goto fail; }
-
-    fprintf(fp, "size,cycles,type,dpu\n");
-
-    for (int i = MIN_BLOCK_SIZE; i <= MAX_BLOCK_SIZE; ++i) {
-        int idx = i - MIN_BLOCK_SIZE;
-
-        for (int j = 0; j < 64; ++j) {
-            fprintf(fp, "%zu,%" PRIu64 ",enc,%d\n", 1lu << i, out_time_enc[j][idx], j);
-            fprintf(fp, "%zu,%" PRIu64 ",dec,%d\n", 1lu << i, out_time_dec[j][idx], j);
-        }
-
-    }
-
-    fclose(fp);
     vud_rank_free(&rank);
 
     puts("Benchmark Finished.");
@@ -82,8 +86,6 @@ fail:
         printf("ime error: %s\n", vud_error_str(rank.err));
     }
 
-    fclose(fp);
     vud_rank_free(&rank);
-
     return 1;
 }
