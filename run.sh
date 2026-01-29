@@ -159,3 +159,4 @@ echo "=== Benchmarks Finished ==="
 OUTPUT_ARCHIVE="$(basename $OUTDIR).tar"
 echo "Creating output archive '$OUTPUT_ARCHIVE"
 tar cf $OUTPUT_ARCHIVE $OUTDIR
+cp $OUTPUT_ARCHIVE ~
