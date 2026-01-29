@@ -155,3 +155,8 @@ then
   echo "Wrote results to $OUTDIR/sk.csv"
   echo ""
 fi
+
+echo "=== Benchmarks Finished ==="
+OUTPUT_ARCHIVE="$(basename $OUTDIR).tar"
+echo "Creating output archive '$OUTPUT_ARCHIVE"
+tar cf $OUTPUT_ARCHIVE $OUTDIR/*
