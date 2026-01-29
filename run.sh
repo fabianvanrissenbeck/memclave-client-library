@@ -17,7 +17,7 @@ RUN_CRYPTO="no"
 RUN_SUBK="no"
 
 # Output Directory of CSV Files
-OUTDIR=$(realpath output/)
+OUTDIR=output/
 
 function print_help_exit {
   echo "Usage: ./run.sh ([ all | prim | mlpbfs | micro | subk ])?"
@@ -75,11 +75,11 @@ else
 fi
 
 echo "=== Benchmark Configuration ==="
-echo "RUN_PRIM: $RUN_PRIM"
-echo "RUN_BFSMLP: $RUN_BFSMLP"
-echo "RUN_CRYPTO: $RUN_CRYPTO"
-echo "RUN_MRAM: $RUN_MRAM"
-echo "RUN_SUBK: $RUN_SUBK"
+echo "RUN_PRIM: $RUN_PRIM (Claim C1)"
+echo "RUN_BFSMLP: $RUN_BFSMLP (Claim C2)"
+echo "RUN_CRYPTO: $RUN_CRYPTO (Claim C3)"
+echo "RUN_MRAM: $RUN_MRAM (Claim C3)"
+echo "RUN_SUBK: $RUN_SUBK (Claim C3)"
 
 echo "Writing outputs to: $OUTDIR"
 echo ""
@@ -96,7 +96,6 @@ then
 	fi
 
 	tar xf ./bfs-data.tar.zst --directory ./data/
-	exit 1;
 fi
 
 if [ "$RUN_PRIM" == "yes" ];
@@ -159,4 +158,4 @@ fi
 echo "=== Benchmarks Finished ==="
 OUTPUT_ARCHIVE="$(basename $OUTDIR).tar"
 echo "Creating output archive '$OUTPUT_ARCHIVE"
-tar cf $OUTPUT_ARCHIVE $OUTDIR/*
+tar cf $OUTPUT_ARCHIVE $OUTDIR
