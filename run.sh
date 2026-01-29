@@ -1,13 +1,75 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
-# Simple PRiM/Memclave runner for build/ (ime-*-example)
-# - run all or selected tests
-# - log per test
-# - classify PASS/FAIL based on "OK" vs "ERROR" in output
+# basic PrIM benchmark suite of 16 benchmarks
+RUN_PRIM="no"
 
-BUILD_DIR="$(cd "$(dirname "$0")" && pwd)/build"
-LOGDIR="$BUILD_DIR/logs/$(date +%Y%m%d_%H%M%S)"
+# BFS and MLP benchmarks with multiple inputs
+RUN_BFSMLP="no"
+
+# Microbenchmarks except subkernel load times/key exchange/ready line
+RUN_MICRO="no"
+
+# Microbenchmark reporting subkernel load times/key exchange and ready line
+RUN_SUBK="no"
+
+# Output Directory of CSV Files
+OUTDIR=$(realpath output/)
+
+function print_help_exit {
+  echo "Usage: ./run.sh ([ all | prim | mlpbfs | micro | subk ])?"
+  echo "Run benchmarks within the memclave environment. Usually no command line option is required."
+  echo "You may alter the number of benchmarks executed by passing one of the following parameters:"
+  echo "all    - Run all benchmarks even those requiring a modified TL"
+  echo "prim   - Run the full PrIM benchmark suite with default input sizes"
+  echo "bfsmlp - Run the MLP and BFS benchmarks with different input sizes"
+  echo "micro  - Run the MRAM throughput and sealed EM transfer benchmarks"
+  echo "subk   - Run the benchmark reporting ready line, key exchange and subkernel load speeds"
+  echo "         Requires a modified TL."
+  exit 1
+}
+
+if [ "$#" == "0" ];
+then
+  RUN_PRIM="yes"
+  RUN_BFSMLP="yes"
+  RUN_MICRO="yes"
+elif [ "$#" == "1" ];
+then
+  if [ "$1" == "all" ];
+  then
+    RUN_PRIM="yes"
+    RUN_BFSMLP="yes"
+    RUN_MICRO="yes" 
+    RUN_SUBK="yes"
+  elif [ "$1" == "prim" ];
+  then
+    RUN_PRIM="yes"
+  elif [ "$1" == "bfsmlp" ];
+  then
+    RUN_BFSMLP="yes"
+  elif [ "$1" == "micro" ];
+  then
+    RUN_MICRO="yes"
+  elif [ "$1" == "subk" ];
+  then
+    RUN_SUBK="yes"
+  else
+    print_help_exit
+  fi
+else
+  print_help_exit
+fi
+
+echo "=== Benchmark Configuration ==="
+echo "RUN_PRIM: $RUN_PRIM"
+echo "RUN_BFSMLP: $RUN_BFSMLP"
+echo "RUN_MICRO: $RUN_MICRO"
+echo "RUN_SUBK: $RUN_SUBK"
+
+echo "Writing outputs to: $OUTDIR"
+echo ""
+mkdir -p $OUTDIR
 
 BFS_DATA_URL=https://zenodo.org/records/18307126/files/bfs-data.tar.zst
 
@@ -23,155 +85,50 @@ then
 	exit 1;
 fi
 
-# Canonical test name -> binary
-declare -A BIN=(
-  ["BFS"]="ime-bfs-example"
-  ["BS"]="ime-bs-example"
-  ["GEMV"]="ime-gemv-example"
-  ["HSTL"]="ime-hstl-example"
-  ["HSTS"]="ime-hsts-example"
-  ["MLP"]="ime-mlp-example"
-  ["RED"]="ime-red-example"
-  ["SCANSSA"]="ime-scanssa-example"
-  ["SCANRSS"]="ime-scanrss-example"
-  ["SEL"]="ime-sel-example"
-  ["TRNS"]="ime-trns-example"
-  ["TS"]="ime-ts-example"
-  ["UNI"]="ime-uni-example"
-  ["VA"]="ime-va-example"
-  ["SPMV"]="ime-spmv-example"
-  ["NW"]="ime-nw-example"
-)
-
-# A few friendly aliases
-alias_name() {
-  local t="$1"
-  t="$(echo "$t" | tr '[:lower:]' '[:upper:]' | tr -d ' ')"
-  case "$t" in
-    "SCAN_SSA"|"SCAN-SSA") echo "SCANSSA" ;;
-    "SCAN_RSS"|"SCAN-RSS") echo "SCANRSS" ;;
-    "HST-S"|"HSTS") echo "HSTS" ;;
-    "HST-L"|"HSTL") echo "HSTL" ;;
-    *) echo "$t" ;;
-  esac
-}
-
-list_tests() {
-  echo "Known tests:"
-  for k in "${!BIN[@]}"; do
-    printf "  %-8s -> %s\n" "$k" "${BIN[$k]}"
-  done | sort
-  echo
-  echo "Discovered binaries in $BUILD_DIR:"
-  (cd "$BUILD_DIR" && ls -1 ime-*-example 2>/dev/null || true) | sed 's/^/  /'
-}
-
-usage() {
-  cat <<EOF
-Usage:
-  $0 --list
-  $0 all
-  $0 TRNS BS MLP
-  $0 ime-trns-example ime-bs-example   # direct binary names also work
-
-Pass/Fail rule:
-  FAIL if output contains "ERROR"
-  PASS if output contains "OK" (and no ERROR)
-  Otherwise -> FAIL (unknown)
-
-Logs:
-  $LOGDIR/<TEST>.log
-EOF
-}
-
-mkdir -p "$LOGDIR"
-
-if [[ $# -lt 1 ]]; then
-  usage
-  exit 1
+if [ "$RUN_PRIM" == "yes" ];
+then
+  echo "=== Running PrIM Benchmarks ==="
+  ./run_prim.sh all
+  mv ./build/prim_results.csv $OUTDIR/
+  echo ""
 fi
 
-if [[ "${1:-}" == "--list" ]]; then
-  list_tests
-  exit 0
+if [ "$RUN_BFSMLP" == "yes" ];
+then
+  echo "=== Running MLP Benchmarks ==="
+  python3 run_mlp.py --mode memclave --cwd build
+  mv mlp_results.csv $OUTDIR/
+  echo ""
+
+  echo "=== Running BFS Benchmarks ==="
+  python3 run_bfs.py --mode memclave --cwd ./build --graph-prefix ../data
+  mv bfs_results.csv $OUTDIR/
+  echo ""
 fi
 
-# Build run list
-RUN_TESTS=()
+if [ "$RUN_MICRO" == "yes" ];
+then
+  echo "=== Running MRAM Benchmark (This one takes ~30 minutes) ==="
+  cd build
+  ./mram > mram.csv
+  cd ..
+  mv build/mram.csv $OUTDIR/
+  echo ""
 
-if [[ "${1:-}" == "all" || "${1:-}" == "ALL" ]]; then
-  # fixed order (edit if you want)
-  RUN_TESTS=(BS TS TRNS RED HSTS HSTL SEL UNI SCANSSA SCANRSS GEMV MLP VA BFS SPMV NW)
-else
-  for arg in "$@"; do
-    # allow direct binary
-    if [[ "$arg" == ime-*-example ]]; then
-      RUN_TESTS+=("$arg")
-      continue
-    fi
-    RUN_TESTS+=("$(alias_name "$arg")")
-  done
+  echo "=== Running Sealed EM Benchmark ==="
+  cd build
+  ./crypto-bench > crypto.csv
+  cd ..
+  mv build/crypto.csv $OUTDIR/
+  echo ""
 fi
 
-PASSED=()
-FAILED=()
-
-echo "Logs: $LOGDIR"
-echo
-
-run_one() {
-  local test="$1"
-  local bin="$2"
-  local log="$3"
-
-  if [[ ! -x "$BUILD_DIR/$bin" ]]; then
-    echo "[FAIL] $test : missing $bin"
-    FAILED+=("$test")
-    return 0
-  fi
-
-  echo "==> Running $test ($bin)"
-  (cd "$BUILD_DIR" && "./$bin") 2>&1 | tee "$log" >/dev/null
-
-  if grep -q "ERROR" "$log"; then
-    echo "[FAIL] $test (found ERROR)"
-    FAILED+=("$test")
-  elif grep -q "OK" "$log"; then
-    echo "[PASS] $test (found OK)"
-    PASSED+=("$test")
-  else
-    echo "[FAIL] $test (no OK/ERROR marker)"
-    FAILED+=("$test")
-  fi
-  echo
-}
-
-for t in "${RUN_TESTS[@]}"; do
-  if [[ "$t" == ime-*-example ]]; then
-    test_name="$t"
-    run_one "$test_name" "$t" "$LOGDIR/${test_name}.log"
-    continue
-  fi
-
-  if [[ -z "${BIN[$t]+x}" ]]; then
-    echo "[FAIL] $t : unknown test name (use --list)"
-    FAILED+=("$t")
-    echo
-    continue
-  fi
-
-  run_one "$t" "${BIN[$t]}" "$LOGDIR/${t}.log"
-done
-
-echo "==================== Summary ===================="
-echo "PASSED (${#PASSED[@]}):"
-for t in "${PASSED[@]}"; do echo "  - $t"; done
-echo
-echo "FAILED (${#FAILED[@]}):"
-for t in "${FAILED[@]}"; do echo "  - $t"; done
-echo "================================================="
-
-if [[ "${#FAILED[@]}" -gt 0 ]]; then
-  exit 1
+if [ "$RUN_SUBK" == "yes" ];
+then
+  echo "=== Running Micro Benchmarks ==="
+  cd build
+  ./sk-load-bench > sk.csv
+  cd ..
+  mv build.sk.csv $OUTDIR/
+  echo ""
 fi
-exit 0
