@@ -97,6 +97,9 @@ add_dependencies(prim-benchmarks
 	ime-nw-example
 )
 
+add_custom_target(benchmarks)
+add_dependencies(benchmarks prim-benchmarks sk-load-bench crypto-bench mram)
+
 add_executable(debug examples/debug/main.c)
 target_link_libraries(debug PUBLIC ime-client-lib)
 
